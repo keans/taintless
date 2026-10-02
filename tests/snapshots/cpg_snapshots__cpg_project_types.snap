@@ -3,7 +3,7 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 4, "call": 40, "field": 2, "field_access": 21, "file": 4, "identifier": 98, "literal": 16, "local": 4, "method": 21, "method_return": 21, "other": 264, "param": 16, "return": 4, "type": 10, "type_decl": 10}
-edges: {"argument": 31, "ast": 494, "call": 20, "cdg": 27, "cfg": 48, "contains": 58, "param_in": 16, "reaching": 42, "receiver": 28, "ref": 27, "return_out": 4, "scope": 31, "type_of": 15}
+edges: {"argument": 31, "ast": 494, "call": 20, "cdg": 27, "cfg": 48, "contains": 58, "param_in": 16, "reaching": 44, "receiver": 28, "ref": 27, "return_out": 4, "scope": 31, "type_of": 15}
 call Svc.bad -> Runner.Go
 call Svc.bad -> Runner.Go
 call Svc.good -> Safe.Go

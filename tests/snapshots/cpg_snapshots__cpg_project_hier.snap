@@ -3,7 +3,7 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 1, "call": 14, "field_access": 8, "file": 5, "identifier": 55, "local": 1, "method": 21, "method_return": 20, "other": 140, "param": 10, "type": 3, "type_decl": 13}
-edges: {"argument": 2, "ast": 262, "call": 18, "cdg": 15, "cfg": 35, "contains": 45, "inherits": 7, "param_in": 1, "reaching": 19, "receiver": 9, "ref": 9, "scope": 34, "type_of": 3}
+edges: {"argument": 2, "ast": 262, "call": 18, "cdg": 15, "cfg": 35, "contains": 45, "inherits": 7, "param_in": 1, "reaching": 21, "receiver": 9, "ref": 9, "scope": 34, "type_of": 3}
 call A.go -> A.hook
 call A.go -> B.hook
 call Animal::twice -> Animal::speak

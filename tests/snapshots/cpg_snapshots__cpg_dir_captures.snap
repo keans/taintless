@@ -3,7 +3,7 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 25, "call": 38, "field_access": 21, "file": 4, "identifier": 100, "literal": 17, "local": 23, "method": 19, "method_return": 19, "other": 181, "param": 4, "return": 2}
-edges: {"argument": 19, "ast": 407, "call": 10, "capture": 4, "cdg": 52, "cfg": 72, "contains": 61, "param_in": 2, "param_out": 5, "reaching": 36, "receiver": 17, "ref": 56, "return_out": 3, "scope": 19}
+edges: {"argument": 19, "ast": 407, "call": 10, "capture": 4, "cdg": 52, "cfg": 72, "contains": 61, "param_in": 2, "param_out": 5, "reaching": 45, "receiver": 17, "ref": 56, "return_out": 3, "scope": 19}
 call feed -> from_param
 call from_param -> from_param.store
 call handler -> load

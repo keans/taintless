@@ -97,7 +97,12 @@ macro_rules! with_grammar {
 
 /// Parse `src` and lower every function to a CFG.
 pub fn build_cfgs(lang: Language, src: &str) -> Result<Vec<Cfg>> {
-    with_grammar!(lang, |spec, g| common::lower(spec, g, src))
+    let mut cfgs = with_grammar!(lang, |spec, g| common::lower(spec, g, src))?;
+    let source: std::sync::Arc<str> = src.into();
+    for cfg in &mut cfgs {
+        cfg.source = source.clone();
+    }
+    Ok(cfgs)
 }
 
 /// Parse `src` and build its language-neutral AST (`file` is the id its nodes carry).

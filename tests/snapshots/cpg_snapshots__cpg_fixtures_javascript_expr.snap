@@ -3,4 +3,4 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 2, "binary_op": 3, "call": 4, "control": 1, "field_access": 3, "file": 1, "identifier": 15, "literal": 2, "local": 2, "method": 4, "method_return": 5, "other": 27, "param": 5, "return": 2}
-edges: {"argument": 1, "ast": 68, "cdg": 22, "cfg": 36, "contains": 11, "reaching": 13, "receiver": 1, "ref": 10, "scope": 4}
+edges: {"argument": 1, "ast": 68, "cdg": 22, "cfg": 36, "contains": 11, "reaching": 15, "receiver": 1, "ref": 10, "scope": 4}

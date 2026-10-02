@@ -18,7 +18,7 @@
 use super::*;
 use crate::analysis::taint::arg_for;
 use crate::cpg::cfg::StmtGraph;
-use crate::cpg::ddg::{Extras, canon, defined_vars_with, reaching_definitions_with};
+use crate::cpg::ddg::{Extras, canon, defined_vars_with, object_reaching_with, reaching_definitions_with};
 use crate::ir::{CallFlow, Flow};
 use petgraph::visit::IntoEdgeReferences;
 
@@ -402,16 +402,28 @@ impl Cpg {
                     }
                 }
             }
-            for (d, u, var) in reaching_definitions_with(cfg, sg, &ex[f]) {
+            let ordinary = reaching_definitions_with(cfg, sg, &ex[f]);
+            let ordinary_set: HashSet<_> = ordinary.iter().cloned().collect();
+            for (d, u, var) in &ordinary {
                 let (from, to) = (map[d.index()], map[u.index()]);
                 // a parameter is defined where it is declared; what the receiver holds is defined by the method
                 let from = match self.param_nodes.get(f).zip(var.split('.').next()) {
-                    Some((nodes, root)) if d == sg.entry && cfg.receiver.as_deref() != Some(root) => nodes.get(root).copied().unwrap_or(from),
+                    Some((nodes, root)) if *d == sg.entry && cfg.receiver.as_deref() != Some(root) => nodes.get(root).copied().unwrap_or(from),
                     _ => from,
                 };
                 if reaching.insert((from, to, var.clone())) {
-                    self.graph.add_edge(from, to, Edge { kind: EdgeKind::Reaching, label: None, var: Some(var), order: 0 });
+                    self.graph.add_edge(from, to, Edge { kind: EdgeKind::Reaching, label: None, var: Some(var.clone()), order: 0 });
                 }
+            }
+            for (d, u, var) in object_reaching_with(cfg, sg, &ex[f]) {
+                if ordinary_set.contains(&(d, u, var.clone())) {
+                    continue;
+                }
+                let from = match self.param_nodes.get(f).zip(var.split('.').next()) {
+                    Some((nodes, root)) if d == sg.entry && cfg.receiver.as_deref() != Some(root) => nodes.get(root).copied().unwrap_or(map[d.index()]),
+                    _ => map[d.index()],
+                };
+                self.graph.add_edge(from, map[u.index()], Edge { kind: EdgeKind::Reaching, label: Some("object"), var: Some(var), order: 0 });
             }
         }
         for (from, to, var) in param_out {

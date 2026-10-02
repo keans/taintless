@@ -16,6 +16,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - run: python3 scripts/check_markdown_width.py
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 

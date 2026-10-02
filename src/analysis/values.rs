@@ -106,6 +106,7 @@ enum Slot {
 
 struct Info {
     file: usize,
+    lang: Language,
     class: Option<String>,
     receiver: Option<String>,
     /// Names the function assigns or takes as parameters.
@@ -147,6 +148,25 @@ fn read_env(env: &Env, path: &str) -> Option<Held> {
     env.get(&s).cloned()
 }
 
+/// JS object literals use dotted member paths in the IR, while a computed
+/// literal string key is written with brackets. Both name the same property.
+fn js_member_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut rest = path;
+    while let Some((head, tail)) = rest.split_once('[') {
+        out.push_str(head);
+        let Some((key, after)) = tail.split_once(']') else { return path.to_string() };
+        let member = key.strip_prefix(['\'', '"']).and_then(|k| k.strip_suffix(['\'', '"']));
+        match member.filter(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')) {
+            Some(name) => { out.push('.'); out.push_str(name); }
+            None => { out.push('['); out.push_str(key); out.push(']'); }
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// What a call hands back and takes in, found while computing a function's locals.
 struct Computed {
     env: Env,
@@ -175,8 +195,9 @@ impl Values {
         let cx = Ctx { fns, resolver, closures: &closures, resolved: RefCell::new(HashMap::new()) };
         let info: Vec<Info> = fns
             .iter()
-            .map(|&(file, _, cfg)| Info {
+            .map(|&(file, lang, cfg)| Info {
                 file,
+                lang,
                 class: cfg.receiver.as_ref().and_then(|_| class_of(&cfg.name)),
                 receiver: cfg.receiver.clone(),
                 declared: cfg
@@ -242,6 +263,9 @@ impl Values {
     }
 
     fn find(&self, n: usize, path: &str) -> Option<Held> {
+        let converted = matches!(self.info[n].lang, Language::JavaScript | Language::TypeScript | Language::Tsx)
+            .then(|| js_member_path(path));
+        let path = converted.as_deref().unwrap_or(path);
         let s = strip_keys(path);
         let info = &self.info[n];
         if let Some(h) = read_env(&self.locals[n], path) {
@@ -375,7 +399,10 @@ impl Ctx<'_> {
             let s = strip_keys(target);
             if s.contains('.') {
                 let field = info.receiver.as_ref().and_then(|r| s.strip_prefix(r.as_str())).and_then(|x| x.strip_prefix('.')).filter(|f| !f.contains('.'));
-                return field.into_iter().map(|f| Slot::Field(f.to_string())).collect();
+                return match field {
+                    Some(f) => vec![Slot::Field(f.to_string())],
+                    None => vec![Slot::Local(s)],
+                };
             }
             let exact = (s != target).then(|| Slot::Local(target.to_string()));
             let any = wild.then(|| Slot::Local(format!("{s}[*]")));
@@ -464,6 +491,18 @@ impl Ctx<'_> {
             }
             if !changed {
                 break;
+            }
+        }
+        // A field stored through another object (`b.cb = sink`) is visible to
+        // methods of its known class (`self.cb(...)` in `Box.fire`).
+        for (path, h) in &env {
+            if let Some((root, field)) = path.split_once('.')
+                && !field.contains('.')
+                && let Some(owner) = env.get(root)
+            {
+                for class in &owner.classes {
+                    mine.entry((class.clone(), field.to_string())).or_default().merge(h);
+                }
             }
         }
         for (k, h) in mine {

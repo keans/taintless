@@ -202,9 +202,11 @@ fn literal_keys_pick_their_element() {
     assert!(t.contains("keyed_dict (line 71) -> start [by reference]\n"), "{t}");
     assert!(t.contains("keyed_list (line 76) -> stop [by reference]\n"), "{t}");
     assert!(t.contains("appended_position (line 81) -> stop x2 [by reference], start [by reference]\n"), "{t}");
-    // JavaScript object literal keys
+    // JavaScript dot and bracket syntax name the same object's properties.
     let js = t.lines().find(|l| l.contains("keyed (line 22)")).unwrap();
-    assert!(js.contains("close [by reference]") && !js.contains("open [by reference]"), "{js}");
+    assert!(js.contains("close [by reference]") && js.contains("open [by reference]"), "{js}");
+    let edges = call_lines("tests/containers");
+    assert!(edges.contains("keyed -> close@24") && edges.contains("keyed -> open@25"), "{edges:?}");
 }
 
 #[test]
@@ -214,6 +216,121 @@ fn constant_computed_key_picks_its_element() {
     assert!(line.contains("start [by reference]") && !line.contains("stop"), "{line}");
     let unknown = t.lines().find(|l| l.contains("computed_unknown_key (line")).unwrap();
     assert!(unknown.contains("start [by reference]") && unknown.contains("stop [by reference]"), "{unknown}");
+}
+
+#[test]
+fn branch_and_parameter_keys_resolve_each_possible_element() {
+    use petgraph::visit::EdgeRef;
+    use std::path::PathBuf;
+    use taintless::analysis::callgraph;
+    use taintless::lang::{Language, build_cfgs};
+
+    let src = r#"
+def start(): pass
+def stop(): pass
+def branch(flag):
+    table = {"a": start, "b": stop}
+    if flag:
+        key = "a"
+    else:
+        key = "b"
+    table[key]()
+def selected(key):
+    table = {"a": start, "b": stop}
+    table[key]()
+def one():
+    selected("a")
+def two():
+    selected("b")
+def unknown(key):
+    table = {"a": start, "b": stop}
+    table[key]()
+def temporal():
+    table = {"a": start, "b": stop}
+    key = "a"
+    table[key]()
+    key = "b"
+    table[key]()
+def only_a(key):
+    table = {"a": start, "b": stop}
+    table[key]()
+def forward(key):
+    only_a(key)
+def call_only_a():
+    forward("a")
+def branch_same(flag):
+    table = {"a": start, "b": stop}
+    if flag:
+        key = "a"
+    else:
+        key = "a"
+    table[key]()
+def branch_unset(flag):
+    table = {"a": start, "b": stop}
+    if flag:
+        key = "a"
+    table[key]()
+"#;
+    let cfgs = build_cfgs(Language::Python, src).unwrap();
+    let cg = callgraph::build(&[(PathBuf::from("keys.py"), Language::Python, cfgs)]);
+    let mut got = std::collections::BTreeSet::new();
+    for edge in cg.graph.edge_references() {
+        for site in &edge.weight().call_sites {
+            if site.invoked {
+                got.insert((cg.graph[edge.source()].name.clone(), cg.graph[edge.target()].name.clone(), site.line));
+            }
+        }
+    }
+    let targets = |name: &str, line: usize| got.iter().filter(|(from, _, at)| from == name && *at == line).map(|(_, to, _)| to.as_str()).collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(targets("branch", 10), ["start", "stop"].into());
+    assert_eq!(targets("selected", 13), ["start", "stop"].into());
+    assert_eq!(targets("unknown", 20), ["start", "stop"].into());
+    assert_eq!(targets("temporal", 24), ["start"].into());
+    assert_eq!(targets("temporal", 26), ["stop"].into());
+    assert_eq!(targets("only_a", 29), ["start"].into());
+    assert_eq!(targets("branch_same", 40), ["start"].into());
+    assert_eq!(targets("branch_unset", 45), ["start", "stop"].into());
+}
+
+#[test]
+fn parameter_keys_select_javascript_and_go_entries() {
+    use petgraph::visit::EdgeRef;
+    use std::path::PathBuf;
+    use taintless::analysis::callgraph;
+    use taintless::lang::{Language, build_cfgs};
+
+    for (lang, source, caller, callee) in [
+        (Language::JavaScript, "function start() {} function stop() {} function dispatch(key) { const table = {a: start, b: stop}; table[key](); } function main() { dispatch('a'); }", "dispatch", "start"),
+        (Language::Go, "package main\nfunc up() {}\nfunc down() {}\nfunc dispatch(key string) { table := map[string]func(){\"up\": up, \"down\": down}; table[key]() }\nfunc main() { dispatch(\"up\") }", "dispatch", "up"),
+    ] {
+        let cfgs = build_cfgs(lang, source).unwrap();
+        let cg = callgraph::build(&[(PathBuf::from("keys"), lang, cfgs)]);
+        let targets: std::collections::BTreeSet<_> = cg.graph.edge_references()
+            .filter(|edge| cg.graph[edge.source()].name == caller && edge.weight().call_sites.iter().any(|site| site.invoked))
+            .map(|edge| cg.graph[edge.target()].name.as_str())
+            .collect();
+        assert_eq!(targets, [callee].into(), "{lang:?}: {targets:?}");
+    }
+}
+
+#[test]
+fn keyword_key_argument_crosses_files() {
+    use petgraph::visit::EdgeRef;
+    use std::path::PathBuf;
+    use taintless::analysis::callgraph;
+    use taintless::lang::{Language, build_cfgs};
+
+    let service = "def start(): pass\ndef stop(): pass\ndef dispatch(key):\n    table = {'a': start, 'b': stop}\n    table[key]()\n";
+    let app = "from service import dispatch\ndef main():\n    dispatch(key='a')\n";
+    let cg = callgraph::build(&[
+        (PathBuf::from("service.py"), Language::Python, build_cfgs(Language::Python, service).unwrap()),
+        (PathBuf::from("app.py"), Language::Python, build_cfgs(Language::Python, app).unwrap()),
+    ]);
+    let targets: std::collections::BTreeSet<_> = cg.graph.edge_references()
+        .filter(|edge| cg.graph[edge.source()].name == "dispatch" && edge.weight().call_sites.iter().any(|site| site.invoked))
+        .map(|edge| cg.graph[edge.target()].name.as_str())
+        .collect();
+    assert_eq!(targets, ["start"].into());
 }
 
 #[test]

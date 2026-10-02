@@ -102,7 +102,7 @@ fn paths_opt(f: Option<&Flow>, ex: &Extras, out: &mut Vec<String>) {
     }
 }
 
-fn uses(s: &Stmt, ex: &Extras, extra: Option<&Vec<String>>) -> Vec<String> {
+fn uses(s: &Stmt, ex: &Extras, extra: Option<&Vec<String>>, owners: bool) -> Vec<String> {
     let mut out = vec![];
     for a in &s.assigns {
         paths(&a.value, ex, &mut out);
@@ -121,6 +121,13 @@ fn uses(s: &Stmt, ex: &Extras, extra: Option<&Vec<String>>) -> Vec<String> {
     paths_opt(s.ret.as_ref(), ex, &mut out);
     paths_opt(s.cond.as_ref(), ex, &mut out);
     out.extend(extra.into_iter().flatten().cloned());
+    if owners {
+        let roots: Vec<String> = out.iter().filter_map(|p| {
+            let root = p.split(['.', '[']).next().unwrap_or(p);
+            (root != p).then(|| root.to_string())
+        }).collect();
+        out.extend(roots);
+    }
     out.sort();
     out.dedup();
     out
@@ -224,6 +231,16 @@ pub fn reaching_definitions(cfg: &Cfg, g: &StmtGraph) -> Vec<(NodeIndex, NodeInd
 
 /// [`reaching_definitions`] with aliases resolved and the effects of calls added.
 pub fn reaching_definitions_with(cfg: &Cfg, g: &StmtGraph, ex: &Extras) -> Vec<(NodeIndex, NodeIndex, String)> {
+    reaching_impl(cfg, g, ex, false)
+}
+
+/// Extra object-provenance edges for the flow view. These are labelled in the CPG so
+/// taint does not treat a clean field as tainted merely because its owner is tainted.
+pub fn object_reaching_with(cfg: &Cfg, g: &StmtGraph, ex: &Extras) -> Vec<(NodeIndex, NodeIndex, String)> {
+    reaching_impl(cfg, g, ex, true)
+}
+
+fn reaching_impl(cfg: &Cfg, g: &StmtGraph, ex: &Extras, owners: bool) -> Vec<(NodeIndex, NodeIndex, String)> {
     let stmt_of = |n: NodeIndex| match g.graph[n] {
         SNode::Stmt { block, idx } => Some(&cfg.graph[block].stmts[idx]),
         _ => None,
@@ -233,7 +250,7 @@ pub fn reaching_definitions_with(cfg: &Cfg, g: &StmtGraph, ex: &Extras) -> Vec<(
     let mut fields: Vec<String> = vec![];
     if let Some(r) = &cfg.receiver {
         for s in g.graph.node_indices().filter_map(stmt_of) {
-            for u in uses(s, ex, None) {
+            for u in uses(s, ex, None, false) {
                 let mut seg = u.split('.');
                 if seg.next() == Some(r.as_str())
                     && let Some(f) = seg.next()
@@ -286,7 +303,7 @@ pub fn reaching_definitions_with(cfg: &Cfg, g: &StmtGraph, ex: &Extras) -> Vec<(
     let mut edges = vec![];
     for n in g.graph.node_indices() {
         let Some(s) = stmt_of(n) else { continue };
-        for read in uses(s, ex, ex.uses.get(&n)) {
+        for read in uses(s, ex, ex.uses.get(&n), owners) {
             for (var, ds) in visible(&ins[n.index()], &read) {
                 edges.extend(ds.iter().map(|&d| (d, n, var.to_string())));
             }

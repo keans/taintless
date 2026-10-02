@@ -105,6 +105,8 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct Cfg {
+    /// Source retained for graph views built from an in-memory CFG project.
+    pub source: std::sync::Arc<str>,
     pub name: String,
     /// 1-based line where the function starts.
     pub line: usize,

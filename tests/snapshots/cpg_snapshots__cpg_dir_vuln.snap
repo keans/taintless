@@ -3,7 +3,7 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 35, "binary_op": 15, "call": 88, "control": 1, "field_access": 57, "file": 11, "identifier": 236, "literal": 54, "local": 34, "method": 24, "method_return": 27, "other": 398, "param": 18, "return": 3, "type": 11, "type_decl": 1}
-edges: {"argument": 78, "ast": 930, "call": 10, "capture": 8, "cdg": 86, "cfg": 121, "contains": 96, "param_in": 3, "reaching": 80, "receiver": 51, "ref": 113, "return_out": 4, "scope": 25, "type_of": 15}
+edges: {"argument": 78, "ast": 930, "call": 10, "capture": 8, "cdg": 86, "cfg": 121, "contains": 96, "param_in": 3, "reaching": 84, "receiver": 51, "ref": 113, "return_out": 4, "scope": 25, "type_of": 15}
 call main -> run
 call main -> run
 call run -> go

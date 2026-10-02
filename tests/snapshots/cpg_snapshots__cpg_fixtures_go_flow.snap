@@ -3,5 +3,5 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 9, "binary_op": 7, "call": 4, "control": 15, "field_access": 1, "file": 1, "identifier": 35, "literal": 17, "local": 7, "method": 3, "method_return": 3, "other": 102, "param": 3, "return": 5, "type": 2, "type_decl": 1}
-edges: {"argument": 3, "ast": 202, "call": 1, "cdg": 34, "cfg": 46, "contains": 15, "reaching": 35, "receiver": 1, "ref": 30, "return_out": 1, "scope": 4, "type_of": 3}
+edges: {"argument": 3, "ast": 202, "call": 1, "cdg": 34, "cfg": 46, "contains": 15, "reaching": 36, "receiver": 1, "ref": 30, "return_out": 1, "scope": 4, "type_of": 3}
 call T.Method -> Method.<anon>

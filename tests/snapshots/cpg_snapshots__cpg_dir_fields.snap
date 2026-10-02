@@ -3,7 +3,7 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 84, "binary_op": 1, "call": 145, "control": 1, "field": 19, "field_access": 130, "file": 10, "identifier": 509, "literal": 37, "local": 45, "method": 68, "method_return": 70, "other": 637, "param": 47, "return": 4, "type": 5, "type_decl": 14}
-edges: {"argument": 96, "ast": 1677, "call": 61, "cdg": 155, "cfg": 230, "contains": 207, "param_in": 50, "param_out": 28, "reaching": 235, "receiver": 61, "ref": 215, "return_out": 6, "scope": 82, "type_of": 8}
+edges: {"argument": 96, "ast": 1677, "call": 61, "cdg": 155, "cfg": 230, "contains": 207, "param_in": 50, "param_out": 28, "reaching": 292, "receiver": 61, "ref": 215, "return_out": 6, "scope": 82, "type_of": 8}
 call ? -> run
 call Bus.__init__ -> run
 call Bus.fire -> run

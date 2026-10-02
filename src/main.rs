@@ -189,6 +189,13 @@ struct Loaded {
     decls: lang::common::Declarations,
 }
 
+fn source_of(l: &Loaded) -> std::io::Result<String> {
+    match l.cfgs.first() {
+        Some(cfg) => Ok(cfg.source.to_string()),
+        None => std::fs::read_to_string(&l.file),
+    }
+}
+
 type Parsed = (PathBuf, Result<(Language, Vec<Cfg>, Vec<lang::common::Import>, lang::common::Declarations)>);
 
 struct Pipeline {
@@ -458,8 +465,8 @@ fn main() -> Result<()> {
         Cmd::Flow { path, format, from, function, control } => {
             let p = load(&path)?;
             summary(&p);
-            // the flow graph is drawn from the code property graph, which parses the files again
-            let sources: Vec<String> = p.ok.iter().map(|l| std::fs::read_to_string(&l.file)).collect::<std::io::Result<_>>()?;
+            // CFGs retain their source so the CPG view also works for in-memory projects.
+            let sources: Vec<String> = p.ok.iter().map(source_of).collect::<std::io::Result<_>>()?;
             let files: Vec<taintless::cpg::SourceFile> = p
                 .ok
                 .iter()
@@ -476,8 +483,8 @@ fn main() -> Result<()> {
         Cmd::Cpg { path, format, edges, function, out } => {
             let p = load(&path)?;
             summary(&p);
-            // the syntax trees are built again here: `load` keeps only the CFGs
-            let sources: Vec<String> = p.ok.iter().map(|l| std::fs::read_to_string(&l.file)).collect::<std::io::Result<_>>()?;
+            // The syntax trees are built from the sources retained by the CFGs.
+            let sources: Vec<String> = p.ok.iter().map(source_of).collect::<std::io::Result<_>>()?;
             let files: Vec<taintless::cpg::SourceFile> = p
                 .ok
                 .iter()

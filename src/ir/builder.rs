@@ -125,7 +125,7 @@ impl CfgBuilder {
         if let Some(c) = self.cur {
             self.graph.add_edge(c, self.exit, EdgeKind::Normal);
         }
-        Cfg { name, line, col: 0, span: (0, 0), node_kind: 0, params, receiver: None, param_types: vec![], class_bases: vec![], class_decls: vec![], free_writes: vec![], ret_type: None, local_types: vec![], local_decls: vec![], local_scopes: vec![], field_types: vec![], iface_methods: vec![], graph: self.graph, entry: self.entry, exit: self.exit }
+        Cfg { source: std::sync::Arc::from(""), name, line, col: 0, span: (0, 0), node_kind: 0, params, receiver: None, param_types: vec![], class_bases: vec![], class_decls: vec![], free_writes: vec![], ret_type: None, local_types: vec![], local_decls: vec![], local_scopes: vec![], field_types: vec![], iface_methods: vec![], graph: self.graph, entry: self.entry, exit: self.exit }
     }
 }
 

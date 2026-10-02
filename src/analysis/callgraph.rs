@@ -3,6 +3,8 @@
 //! names are linked only when few functions share them.
 
 use super::values::Values;
+mod keys;
+use keys::KeyFacts;
 use crate::ir::{Cfg, Flow};
 use crate::lang::Language;
 use petgraph::algo::tarjan_scc;
@@ -699,59 +701,6 @@ pub fn build(files: &[(PathBuf, Language, Vec<Cfg>)]) -> CallGraph {
     build_refs(&refs, None)
 }
 
-/// Literal index assigned once to a local, for calls such as `table[k]()` after `k = "a"`.
-fn constant_keys(cfg: &Cfg) -> HashMap<String, String> {
-    let mut keys = HashMap::new();
-    let mut seen = HashSet::new();
-    for stmt in cfg.graph.node_weights().flat_map(|b| &b.stmts) {
-        for a in &stmt.assigns {
-            let name = a.target.as_str();
-            if name.contains(['.', '[']) {
-                continue;
-            }
-            if !seen.insert(name.to_string()) {
-                keys.remove(name);
-                continue;
-            }
-            let Some((left, right)) = stmt.text.rsplit_once('=') else { continue };
-            if !left.trim_end().ends_with(name) {
-                continue;
-            }
-            let value = right.trim().trim_end_matches(';').trim();
-            let key = if let Some(inner) = value.strip_prefix(['\'', '"']).and_then(|v| v.strip_suffix(['\'', '"'])) {
-                (!inner.is_empty() && inner.len() <= 32 && inner.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')))
-                    .then(|| format!("['{inner}']"))
-            } else {
-                (!value.is_empty() && value.len() <= 6 && value.bytes().all(|b| b.is_ascii_digit()))
-                    .then(|| format!("[{value}]"))
-            };
-            if let Some(key) = key {
-                keys.insert(name.to_string(), key);
-            }
-        }
-    }
-    keys
-}
-
-fn substitute_keys(path: &str, keys: &HashMap<String, String>) -> String {
-    let mut out = String::with_capacity(path.len());
-    let mut rest = path;
-    while let Some((before, after)) = rest.split_once('[') {
-        out.push_str(before);
-        let Some((key, tail)) = after.split_once(']') else { return path.to_string() };
-        if let Some(literal) = keys.get(key) {
-            out.push_str(literal);
-        } else {
-            out.push('[');
-            out.push_str(key);
-            out.push(']');
-        }
-        rest = tail;
-    }
-    out.push_str(rest);
-    out
-}
-
 /// Like [`build`], for callers that only hold references, optionally with
 /// per-file visibility (`deps::visibility`) to disambiguate same-named functions.
 pub fn build_refs(files: &[(&Path, Language, &[Cfg])], visible: Option<Vec<HashSet<usize>>>) -> CallGraph {
@@ -772,12 +721,31 @@ pub fn build_refs(files: &[(&Path, Language, &[Cfg])], visible: Option<Vec<HashS
 
     let flat: Vec<(usize, Language, &Cfg)> = ids.iter().map(|&(_, fi, ci)| (fi, files[fi].1, &files[fi].2[ci])).collect();
     let values = Values::infer(&flat, &resolver);
+    let key_facts = KeyFacts::infer(&flat, &resolver);
+    let closures: HashMap<(usize, usize, usize), usize> = flat.iter().enumerate()
+        .filter(|(_, (_, _, cfg))| cfg.col > 0)
+        .map(|(n, (file, _, cfg))| ((*file, cfg.line, cfg.col), n)).collect();
+    let field_fns = super::taint::collect_field_fns(flat.iter().map(|(file, _, cfg)| (*file, *cfg)), &resolver, &closures);
 
     let mut external: HashMap<String, usize> = HashMap::new();
     let mut edges: HashMap<(NodeIndex, NodeIndex), CallEdge> = HashMap::new();
     for (n, &(caller, fi, ci)) in ids.iter().enumerate() {
         let cfg = &files[fi].2[ci];
-        let const_keys = constant_keys(cfg);
+        let mut written_callbacks: HashMap<String, HashSet<usize>> = HashMap::new();
+        for call in cfg.graph.node_weights().flat_map(|b| &b.stmts).flat_map(|s| &s.calls) {
+            let resolved = resolver.resolve(&call.callee, fi);
+            for target in resolved.ids {
+                let params = &flat[target].2.params;
+                for (path, refs) in super::taint::callable_writes(&field_fns, target) {
+                    let (root, suffix) = path.split_once('.').map_or((path.as_str(), ""), |(r, _)| (r, &path[r.len()..]));
+                    if let Some(j) = params.iter().position(|names| names.iter().any(|name| name == root))
+                        && let Some(Flow::Path(actual)) = super::taint::arg_for(call, j, params)
+                    {
+                        written_callbacks.entry(format!("{actual}{suffix}")).or_default().extend(refs);
+                    }
+                }
+            }
+        }
         let own_class = cfg.receiver.as_ref().and_then(|_| class_of(&cfg.name));
         let typed: HashMap<&str, &str> = types.locals[n].iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let stmts = || cfg.graph.node_weights().flat_map(|b| &b.stmts);
@@ -873,11 +841,20 @@ pub fn build_refs(files: &[(&Path, Language, &[Cfg])], visible: Option<Vec<HashS
                 }
             }
             // `handlers[k]()`, `f = handler; f()`, `self.hooks[0]()`: functions held by a variable, container or field
-            if targets.is_empty()
-                && let Some(h) = values.lookup(n, &substitute_keys(call.callee_key.as_deref().unwrap_or(&call.callee), &const_keys))
-                && !h.fns.is_empty()
-            {
-                targets = h.fns.iter().copied().collect();
+            if targets.is_empty() {
+                for path in key_facts.paths(n, cfg, call) {
+                    if let Some(h) = values.lookup(n, &path) {
+                        targets.extend(h.fns.iter().copied());
+                    }
+                }
+                if !targets.is_empty() {
+                    targets.sort_unstable();
+                    targets.dedup();
+                    callback = true;
+                }
+            }
+            if targets.is_empty() && let Some(refs) = written_callbacks.get(&call.callee) {
+                targets.extend(refs);
                 callback = true;
             }
             if targets.is_empty() {
@@ -899,6 +876,12 @@ pub fn build_refs(files: &[(&Path, Language, &[Cfg])], visible: Option<Vec<HashS
                     } else if let Some(h) = values.lookup(n, p) {
                         for &t in &h.fns {
                             add(t, call, true, false, true);
+                        }
+                    } else if p.contains('.') {
+                        // Explicitly handed-over method on an object of unknown class:
+                        // visible same-named implementations are possible callbacks.
+                        for t in resolver.resolve(p, fi).ids {
+                            add(t, call, true, false, false);
                         }
                     }
                 }

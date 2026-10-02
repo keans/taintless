@@ -3,7 +3,7 @@ source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
 nodes: {"assign": 4, "call": 16, "field_access": 21, "file": 10, "identifier": 71, "literal": 1, "local": 3, "method": 23, "method_return": 24, "other": 320, "param": 12, "type": 8, "type_decl": 13}
-edges: {"ast": 481, "call": 30, "cdg": 24, "cfg": 48, "contains": 58, "imports": 2, "reaching": 37, "receiver": 16, "ref": 15, "scope": 36, "type_of": 8}
+edges: {"ast": 481, "call": 30, "cdg": 24, "cfg": 48, "contains": 58, "imports": 2, "reaching": 42, "receiver": 16, "ref": 15, "scope": 36, "type_of": 8}
 call H.viaDefined -> Other.run
 call H.viaDefined -> Runner.run
 call Svc.shadowed -> Other.run

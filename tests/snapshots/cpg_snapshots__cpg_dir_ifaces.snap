@@ -2,8 +2,8 @@
 source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
-nodes: {"assign": 1, "call": 5, "field": 1, "field_access": 6, "file": 2, "identifier": 20, "local": 1, "method": 14, "method_return": 14, "other": 170, "param": 3, "type": 4, "type_decl": 11}
-edges: {"ast": 230, "call": 11, "cdg": 6, "cfg": 20, "contains": 34, "inherits": 7, "reaching": 16, "receiver": 5, "ref": 6, "scope": 25, "type_of": 5}
+nodes: {"assign": 1, "call": 6, "field": 1, "field_access": 7, "file": 2, "identifier": 22, "local": 1, "method": 15, "method_return": 15, "other": 184, "param": 4, "type": 5, "type_decl": 12}
+edges: {"ast": 251, "call": 12, "cdg": 7, "cfg": 22, "contains": 37, "inherits": 8, "reaching": 19, "receiver": 6, "ref": 7, "scope": 27, "type_of": 6}
 call Svc.Go -> A.Run
 call Svc.Go -> B.Run
 call Svc.Go -> C.Run
@@ -12,6 +12,7 @@ call direct -> Base.Wake
 call embedded -> A.Run
 call embedded -> B.Run
 call embedded -> C.Run
+call embedded_only -> Base.Wake
 call local -> A.Run
 call local -> B.Run
 call local -> C.Run

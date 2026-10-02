@@ -151,8 +151,8 @@ fn aliases_through_calls_fields_elements_and_returned_arguments() {
     // h.r = a, then h.r.d = ..: a.d
     assert!(t.contains("os.system():29 <- a:25, h.r.d:28"), "{t}");
     // xs = [a], then xs[0].d = ..: a.d
-    assert!(t.contains("xs.d:35"), "{t}");
-    assert!(t.contains("os.system():36 <- a:33") && t.lines().any(|l| l.contains("os.system():36") && l.contains("xs.d:35")), "{t}");
+    assert!(t.contains("xs[0].d:35"), "{t}");
+    assert!(t.contains("os.system():36 <- a:33") && t.lines().any(|l| l.contains("os.system():36") && l.contains("xs[0].d:35")), "{t}");
     // b = identity(a), then b.d = ..: a.d
     assert!(t.contains("os.system():47 <- a:44, b.d:46"), "{t}");
     // an unrelated object stays unrelated

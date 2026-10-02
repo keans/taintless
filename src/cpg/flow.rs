@@ -212,7 +212,7 @@ impl<'a> View<'a> {
             .cpg
             .graph
             .edges_directed(sn, Direction::Incoming)
-            .filter(|e| e.weight().kind == CpgEdge::Reaching && e.weight().label.is_none())
+            .filter(|e| e.weight().kind == CpgEdge::Reaching && matches!(e.weight().label, None | Some("object")))
             .filter_map(|e| Some((e.source(), e.weight().var.clone()?)))
             .filter(|(_, v)| related(v, &path))
             .collect();

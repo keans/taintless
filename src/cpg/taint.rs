@@ -23,7 +23,10 @@
 
 use super::graph::{Cpg, EdgeKind};
 use super::node::NodeKind;
-use crate::analysis::rules::{ArgSel, Mode, RuleSet, ignores_env_sources, is_env_source, matches, rules_for, wild};
+use crate::analysis::rules::{
+    ArgSel, Mode, RuleSet, ignores_env_sources, is_env_source, matches, rules_for, wild,
+};
+use crate::analysis::{Finding, Severity};
 use crate::lang::common::normalize_callee;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -41,11 +44,39 @@ pub struct TaintFlow {
     /// What carries the data into the sink: a tainted variable, or a call
     /// (`helper()`) returning tainted data; `None` when the argument holds a source itself.
     pub via: Option<String>,
+    /// The rule's user-facing description, including the sink call.
+    pub message: String,
+    /// The untrusted source and the call or field chain leading to this sink.
+    pub origin: Option<String>,
+    pub cwe: &'static str,
+    pub severity: Severity,
+}
+
+impl TaintFlow {
+    /// Convert a CPG flow into the same report shape as the CFG analysis.
+    pub fn finding(&self, cpg: &Cpg) -> Finding {
+        Finding {
+            rule: self.rule,
+            cwe: self.cwe,
+            severity: self.severity,
+            message: self.message.clone(),
+            file: cpg.files[self.file].path.to_path_buf(),
+            function: cpg.graph[cpg.enclosing_method(self.sink)]
+                .name
+                .clone()
+                .unwrap_or_default(),
+            line: self.line,
+            col: self.col,
+            origin: self.origin.clone(),
+        }
+    }
 }
 
 /// A path-like text (`a.b.c`, `xs[0].d`, `d['k']`).
 fn is_path(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '[' | ']' | '\'' | '"'))
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '[' | ']' | '\'' | '"'))
 }
 
 /// The class a method belongs to: its qualified name without the last segment.
@@ -59,10 +90,15 @@ fn class_of(name: &str) -> Option<String> {
 fn read_path(code: &str) -> &str {
     let mut from = 0;
     while let Some(i) = code[from..].find('[').map(|i| i + from) {
-        let Some(end) = code[i..].find(']').map(|e| e + i) else { return &code[..i] };
+        let Some(end) = code[i..].find(']').map(|e| e + i) else {
+            return &code[..i];
+        };
         let key = &code[i + 1..end];
         let literal = (!key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()))
-            || key.strip_prefix(['\'', '"']).and_then(|k| k.strip_suffix(['\'', '"'])).is_some_and(|k| !k.is_empty());
+            || key
+                .strip_prefix(['\'', '"'])
+                .and_then(|k| k.strip_suffix(['\'', '"']))
+                .is_some_and(|k| !k.is_empty());
         if !literal {
             return &code[..i];
         }
@@ -79,12 +115,20 @@ fn mentions(cpg: &Cpg, fn_of: &HashMap<NodeIndex, usize>, n: NodeIndex, v: &str)
         return false;
     }
     let f = fn_of.get(&cpg.enclosing_method(n)).copied();
-    let code = f.map_or_else(|| read_path(&x.code).to_string(), |f| cpg.canon(f, read_path(&x.code)));
+    let code = f.map_or_else(
+        || read_path(&x.code).to_string(),
+        |f| cpg.canon(f, read_path(&x.code)),
+    );
     if related(v, &code) {
         return true;
     }
     let recv = f.and_then(|i| cpg.receivers[i].as_deref());
-    x.kind == NodeKind::Identifier && recv.is_some_and(|r| v.strip_prefix(r).and_then(|f| f.strip_prefix('.')).is_some_and(|f| related(f, &code)))
+    x.kind == NodeKind::Identifier
+        && recv.is_some_and(|r| {
+            v.strip_prefix(r)
+                .and_then(|f| f.strip_prefix('.'))
+                .is_some_and(|f| related(f, &code))
+        })
 }
 
 /// Is `rest` (what follows a path prefix) a field or an element of it?
@@ -123,6 +167,7 @@ struct Solver<'a> {
     tainted: HashSet<Fact>,
     /// Tainted variables each statement reads (any context).
     reads: HashMap<NodeIndex, HashSet<String>>,
+    read_contexts: HashMap<(NodeIndex, String), HashSet<Ctx>>,
     /// `(statement, variable, context)` reads already followed.
     followed: HashSet<Fact>,
     /// Calls whose result is untrusted.
@@ -150,8 +195,14 @@ impl<'a> Solver<'a> {
     fn is_source(&self, n: NodeIndex) -> bool {
         let x = &self.cpg.graph[n];
         let desc = match x.kind {
-            NodeKind::Call => x.name.as_deref().map(normalize_callee).filter(|c| self.rules(n).is_source_call(c)),
-            NodeKind::FieldAccess | NodeKind::Identifier => Some(x.code.clone()).filter(|c| is_path(c) && self.rules(n).is_source_path(c)),
+            NodeKind::Call => x
+                .name
+                .as_deref()
+                .map(normalize_callee)
+                .filter(|c| self.rules(n).is_source_call(c)),
+            NodeKind::FieldAccess | NodeKind::Identifier => {
+                Some(x.code.clone()).filter(|c| is_path(c) && self.rules(n).is_source_path(c))
+            }
             _ => None,
         };
         desc.is_some_and(|d| !(self.skip_env && is_env_source(&d)))
@@ -159,12 +210,487 @@ impl<'a> Solver<'a> {
 
     fn is_sanitizer(&self, n: NodeIndex) -> bool {
         let x = &self.cpg.graph[n];
-        x.kind == NodeKind::Call && x.name.as_deref().is_some_and(|c| self.rules(n).is_sanitizer(&normalize_callee(c)))
+        x.kind == NodeKind::Call
+            && x.name
+                .as_deref()
+                .is_some_and(|c| self.rules(n).is_sanitizer(&normalize_callee(c)))
     }
 
     /// Sanitizers clean only their own result; sibling expressions still flow.
     fn flow_nodes(&self, root: NodeIndex) -> Vec<NodeIndex> {
         self.cpg.flow_nodes_until(root, |n| self.is_sanitizer(n))
+    }
+
+    fn source_origin(&self, n: NodeIndex) -> String {
+        let node = &self.cpg.graph[n];
+        let desc = if node.kind == NodeKind::Call {
+            let name = node
+                .name
+                .as_deref()
+                .map(normalize_callee)
+                .unwrap_or_else(|| node.code.clone());
+            match self.rules(n).source_call_note(&name) {
+                Some(note) => format!("{name}() ({note})"),
+                None => format!("{name}()"),
+            }
+        } else {
+            let mut path = node.code.clone();
+            let info = &self.cpg.files[node.file];
+            let mut parent = node.ast.and_then(|i| info.ast.nodes[i].parent);
+            while let Some(i) = parent {
+                let candidate = &info.ast.nodes[i].code;
+                if !candidate.starts_with(&path)
+                    || !candidate[path.len()..].starts_with('[')
+                    || !is_path(candidate)
+                {
+                    break;
+                }
+                path = candidate.clone();
+                parent = info.ast.nodes[i].parent;
+            }
+            match self.rules(n).source_path_note(&path) {
+                Some(note) => format!("{path} ({note})"),
+                None => path,
+            }
+        };
+        format!("{desc} (line {})", node.line)
+    }
+
+    /// Find a source behind a tainted local read using the same reaching edges
+    /// that caused the solver to mark it. Keep this within one function: an
+    /// interprocedural explanation needs the call context as well.
+    fn local_origin(&self, at: NodeIndex, var: &str) -> Option<String> {
+        let owner = self.cpg.enclosing_method(at);
+        let mut pending = vec![(at, var.to_string())];
+        let mut seen = HashSet::new();
+        while let Some((use_node, value)) = pending.pop() {
+            if !seen.insert((use_node, value.clone())) || seen.len() > 128 {
+                continue;
+            }
+            for edge in self.cpg.graph.edges_directed(use_node, Direction::Incoming) {
+                if edge.weight().kind != EdgeKind::Reaching
+                    || edge.weight().label.is_some()
+                    || edge.weight().var.as_deref() != Some(&value)
+                {
+                    continue;
+                }
+                let def = edge.source();
+                if self.cpg.enclosing_method(def) != owner {
+                    continue;
+                }
+                if let Some(source) = self
+                    .flow_nodes(def)
+                    .into_iter()
+                    .find(|&n| self.is_source(n))
+                {
+                    return Some(self.source_origin(source));
+                }
+                for call in self
+                    .flow_nodes(def)
+                    .into_iter()
+                    .filter(|&n| self.cpg.graph[n].kind == NodeKind::Call)
+                {
+                    for arg in self.cpg.arguments(call) {
+                        if let Some(source) = self
+                            .flow_nodes(arg)
+                            .into_iter()
+                            .find(|&n| self.is_source(n))
+                        {
+                            return Some(self.source_origin(source));
+                        }
+                    }
+                    if self.tainted_calls.contains(&call)
+                        && let Some(source) = self.call_origin(call)
+                    {
+                        return Some(source);
+                    }
+                }
+                for output in self.cpg.graph.edges_directed(def, Direction::Incoming) {
+                    if output.weight().kind != EdgeKind::ParamOut {
+                        continue;
+                    }
+                    let Some((written, caller)) = output
+                        .weight()
+                        .var
+                        .as_deref()
+                        .and_then(|v| v.split_once('>'))
+                    else {
+                        continue;
+                    };
+                    if caller != value {
+                        continue;
+                    }
+                    let store = output.source();
+                    if let Some(source) = self
+                        .flow_nodes(store)
+                        .into_iter()
+                        .find(|&n| self.is_source(n))
+                    {
+                        return Some(self.source_origin(source));
+                    }
+                    for (_, _, ctx) in self
+                        .tainted
+                        .iter()
+                        .filter(|(d, v, _)| *d == store && v == written)
+                    {
+                        for read in self
+                            .cpg
+                            .graph
+                            .edges_directed(store, Direction::Incoming)
+                            .filter(|e| {
+                                e.weight().kind == EdgeKind::Reaching && e.weight().label.is_none()
+                            })
+                        {
+                            let Some(read_var) = read.weight().var.as_deref() else {
+                                continue;
+                            };
+                            if !self
+                                .flow_nodes(store)
+                                .iter()
+                                .any(|&n| self.mentions(n, read_var))
+                            {
+                                continue;
+                            }
+                            if let Some(origin) = self.parameter_origin(
+                                self.cpg.enclosing_method(store),
+                                read_var,
+                                ctx,
+                                &mut HashSet::new(),
+                            ) {
+                                if let Some((first, tail)) = origin.split_once(" via ")
+                                    && let Some((_, rest)) = tail.split_once(" via ")
+                                {
+                                    return Some(format!("{first} via {rest}"));
+                                }
+                                if let Some((origin, _)) = origin.rsplit_once(" → ") {
+                                    return Some(origin.to_string());
+                                }
+                                return Some(origin);
+                            }
+                        }
+                    }
+                }
+                for incoming in self.cpg.graph.edges_directed(def, Direction::Incoming) {
+                    if incoming.weight().kind != EdgeKind::Reaching
+                        || incoming.weight().label.is_some()
+                    {
+                        continue;
+                    }
+                    if let Some(read_var) = incoming.weight().var.as_deref()
+                        && self
+                            .flow_nodes(def)
+                            .iter()
+                            .any(|&n| self.mentions(n, read_var))
+                    {
+                        pending.push((def, read_var.to_string()));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn parameter_origin(
+        &self,
+        method: NodeIndex,
+        var: &str,
+        ctx: &[NodeIndex],
+        visited: &mut HashSet<(NodeIndex, String)>,
+    ) -> Option<String> {
+        if !visited.insert((method, var.to_string())) || visited.len() > 16 {
+            return None;
+        }
+        for edge in self.cpg.graph.edges_directed(method, Direction::Incoming) {
+            if edge.weight().kind != EdgeKind::ParamIn || edge.weight().var.as_deref() != Some(var)
+            {
+                continue;
+            }
+            let call = edge.source();
+            if ctx.last().is_some_and(|&top| {
+                top != call && self.cpg.statement_of(top) != self.cpg.statement_of(call)
+            }) {
+                continue;
+            }
+            let Some(arg) = self
+                .cpg
+                .arguments(call)
+                .get(edge.weight().order as usize)
+                .copied()
+            else {
+                continue;
+            };
+            let nodes = self.flow_nodes(arg);
+            let source = nodes
+                .iter()
+                .copied()
+                .find(|&n| self.is_source(n))
+                .map(|n| self.source_origin(n))
+                .or_else(|| {
+                    nodes.iter().find_map(|&n| {
+                        let code = &self.cpg.graph[n].code;
+                        if !matches!(
+                            self.cpg.graph[n].kind,
+                            NodeKind::Identifier | NodeKind::FieldAccess
+                        ) || !is_path(code)
+                        {
+                            return None;
+                        }
+                        let caller = self.cpg.enclosing_method(call);
+                        self.local_origin(self.cpg.statement_of(call), code)
+                            .or_else(|| {
+                                self.parameter_origin(
+                                    caller,
+                                    code,
+                                    &ctx[..ctx.len().saturating_sub(1)],
+                                    visited,
+                                )
+                            })
+                    })
+                })
+                .or_else(|| {
+                    (self.cpg.enclosing_method(call) == method)
+                        .then(|| {
+                            self.cpg
+                                .graph
+                                .node_indices()
+                                .filter(|&n| {
+                                    self.cpg.enclosing_method(n) == method
+                                        && self.is_source(n)
+                                        && self.cpg.graph[n].line <= self.cpg.graph[call].line
+                                })
+                                .max_by_key(|&n| self.cpg.graph[n].line)
+                                .map(|n| self.source_origin(n))
+                        })
+                        .flatten()
+                });
+            if let Some(source) = source {
+                let node = &self.cpg.graph[call];
+                let name = self.cpg.graph[method]
+                    .name
+                    .clone()
+                    .or_else(|| node.name.as_deref().map(normalize_callee))
+                    .unwrap_or_else(|| node.code.clone());
+                let file = self.cpg.files[node.file]
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let callback = self
+                    .cpg
+                    .graph
+                    .edges_directed(call, Direction::Outgoing)
+                    .any(|e| {
+                        e.weight().kind == EdgeKind::Call
+                            && e.target() == method
+                            && e.weight().label == Some("param")
+                    });
+                let step = if callback {
+                    format!("{name}()")
+                } else {
+                    format!("{name}() at {file}:{}", node.line)
+                };
+                return Some(match source.split_once(" via ") {
+                    Some((origin, path)) if !callback => format!("{origin} via {path} → {step}"),
+                    Some((origin, path)) => format!("{origin} via {step} via {path}"),
+                    None => format!("{source} via {step}"),
+                });
+            }
+        }
+        None
+    }
+
+    fn capture_origin(&self, method: NodeIndex, var: &str, ctx: &[NodeIndex]) -> Option<String> {
+        self.cpg
+            .graph
+            .edges_directed(method, Direction::Incoming)
+            .filter(|e| {
+                e.weight().kind == EdgeKind::Capture && e.weight().var.as_deref() == Some(var)
+            })
+            .find_map(|e| {
+                let creator = e.source();
+                self.flow_nodes(creator)
+                    .into_iter()
+                    .find(|&n| self.is_source(n))
+                    .map(|n| self.source_origin(n))
+                    .or_else(|| self.local_origin(creator, var))
+                    .or_else(|| {
+                        self.parameter_origin(
+                            self.cpg.enclosing_method(creator),
+                            var,
+                            &ctx[..ctx.len().saturating_sub(1)],
+                            &mut HashSet::new(),
+                        )
+                    })
+            })
+    }
+
+    fn field_origin(&self, method: NodeIndex, var: &str, sink_line: usize) -> Option<String> {
+        let class = class_of(self.cpg.graph[method].name.as_deref()?)?;
+        let field = var.split_once('.')?.1.split(['.', '[']).next()?;
+        let owners = self.class_fns.get(&class)?;
+        let mut candidates = vec![];
+        for (def, written, ctx) in &self.tainted {
+            if !written.ends_with(&format!(".{field}"))
+                || !owners
+                    .iter()
+                    .any(|&i| self.cpg.methods[i] == self.cpg.enclosing_method(*def))
+            {
+                continue;
+            }
+            let source = self
+                .flow_nodes(*def)
+                .into_iter()
+                .find(|&n| self.is_source(n))
+                .map(|n| self.source_origin(n))
+                .or_else(|| {
+                    self.flow_nodes(*def).into_iter().find_map(|n| {
+                        let node = &self.cpg.graph[n];
+                        (node.kind == NodeKind::Identifier && is_path(&node.code))
+                            .then(|| {
+                                self.parameter_origin(
+                                    self.cpg.enclosing_method(*def),
+                                    &node.code,
+                                    ctx,
+                                    &mut HashSet::new(),
+                                )
+                            })
+                            .flatten()
+                    })
+                });
+            if let Some(source) = source {
+                let source = source.split(" via ").next().unwrap_or(&source);
+                if let Some((desc, line)) = source
+                    .rsplit_once(" (line ")
+                    .and_then(|(d, l)| l.strip_suffix(')').map(|l| (d, l)))
+                {
+                    let source_path = &self.cpg.files[self.cpg.graph[*def].file].path;
+                    let filename = source_path.file_name()?.to_string_lossy();
+                    candidates.push((source_path.to_string_lossy().to_string(), format!("{desc} at {filename}:{line} → field `{field}` of {class} (line {sink_line})")));
+                }
+            }
+        }
+        candidates.sort();
+        candidates.into_iter().next_back().map(|(_, origin)| origin)
+    }
+
+    fn receiver_origin(&self, method: NodeIndex, var: &str, ctx: &[NodeIndex]) -> Option<String> {
+        let call = *ctx.last()?;
+        let receiver = self.cpg.out(call, EdgeKind::Receiver).next()?;
+        let recv = &self.cpg.graph[receiver].code;
+        let (_, field) = var.split_once('.')?;
+        let path = format!("{recv}.{field}");
+        let source = self.local_origin(self.cpg.statement_of(call), &path)?;
+        let node = &self.cpg.graph[call];
+        let name = self.cpg.graph[method].name.as_deref()?;
+        let file = self.cpg.files[node.file]
+            .path
+            .file_name()?
+            .to_string_lossy();
+        Some(format!("{source} via {name}() at {file}:{}", node.line))
+    }
+
+    fn call_origin(&self, call: NodeIndex) -> Option<String> {
+        for arg in self.cpg.arguments(call) {
+            if let Some(source) = self
+                .flow_nodes(arg)
+                .into_iter()
+                .find(|&n| self.is_source(n))
+            {
+                return Some(self.source_origin(source));
+            }
+        }
+        let returns: Vec<_> = self
+            .cpg
+            .graph
+            .edges_directed(call, Direction::Incoming)
+            .filter(|e| e.weight().kind == EdgeKind::ReturnOut)
+            .map(|e| e.source())
+            .collect();
+        for &ret in &returns {
+            let direct = self
+                .flow_nodes(ret)
+                .into_iter()
+                .find(|&n| self.is_source(n))
+                .or_else(|| {
+                    self.flow_nodes(ret)
+                        .into_iter()
+                        .filter(|&n| self.cpg.graph[n].kind == NodeKind::Call)
+                        .flat_map(|n| self.cpg.arguments(n))
+                        .find_map(|arg| {
+                            self.flow_nodes(arg)
+                                .into_iter()
+                                .find(|&n| self.is_source(n))
+                        })
+                });
+            if let Some(source) = direct {
+                let origin = self.source_origin(source);
+                let source_file = self.cpg.files[self.cpg.graph[source].file]
+                    .path
+                    .file_name()?
+                    .to_string_lossy();
+                let (desc, _) = origin.rsplit_once(" (line ")?;
+                let callee = self.cpg.graph[call].name.as_deref().map(normalize_callee)?;
+                return Some(format!(
+                    "{desc} at {source_file}:{} → returned by {callee}() (line {})",
+                    self.cpg.graph[source].line, self.cpg.graph[call].line
+                ));
+            }
+            let method = self.cpg.enclosing_method(ret);
+            if let Some(&i) = self.fn_of.get(&method) {
+                for (j, param) in self.cpg.params[i].iter().enumerate() {
+                    if !param.iter().any(|param| {
+                        self.flow_nodes(ret)
+                            .iter()
+                            .any(|&n| self.mentions(n, param))
+                    }) {
+                        continue;
+                    }
+                    let Some(arg) = self.cpg.arguments(call).get(j).copied() else {
+                        continue;
+                    };
+                    if let Some(source) = self
+                        .flow_nodes(arg)
+                        .into_iter()
+                        .find(|&n| self.is_source(n))
+                    {
+                        return Some(self.source_origin(source));
+                    }
+                    for n in self.flow_nodes(arg) {
+                        let code = &self.cpg.graph[n].code;
+                        if matches!(
+                            self.cpg.graph[n].kind,
+                            NodeKind::Identifier | NodeKind::FieldAccess
+                        ) && is_path(code)
+                            && let Some(source) =
+                                self.local_origin(self.cpg.statement_of(call), code)
+                        {
+                            return Some(source);
+                        }
+                    }
+                }
+            }
+        }
+        let receiver = self.cpg.out(call, EdgeKind::Receiver).next()?;
+        let recv = &self.cpg.graph[receiver].code;
+        for ret in returns {
+            let method = self.cpg.enclosing_method(ret);
+            let Some(&i) = self.fn_of.get(&method) else {
+                continue;
+            };
+            let Some(formal) = self.cpg.receivers[i].as_deref() else {
+                continue;
+            };
+            for n in self.flow_nodes(ret) {
+                let path = &self.cpg.graph[n].code;
+                if let Some(field) = path.strip_prefix(formal).and_then(|p| p.strip_prefix('.'))
+                    && let Some(source) =
+                        self.local_origin(self.cpg.statement_of(call), &format!("{recv}.{field}"))
+                {
+                    return Some(source);
+                }
+            }
+        }
+        None
     }
 
     /// Variables a statement defines.
@@ -177,7 +703,9 @@ impl<'a> Solver<'a> {
     fn leave_stmt(&self, ctx: &Ctx, stmt: NodeIndex) -> Option<Ctx> {
         match ctx.last() {
             None => Some(vec![]),
-            Some(&top) if top == stmt || self.cpg.statement_of(top) == stmt => Some(ctx[..ctx.len() - 1].to_vec()),
+            Some(&top) if top == stmt || self.cpg.statement_of(top) == stmt => {
+                Some(ctx[..ctx.len() - 1].to_vec())
+            }
             Some(_) => None,
         }
     }
@@ -218,15 +746,24 @@ impl<'a> Solver<'a> {
     /// A definition of `self.f` that is tainted taints the field for every method of the class.
     fn taint_field(&mut self, def: NodeIndex, var: &str) {
         let cpg = self.cpg;
-        let Some(&i) = self.fn_of.get(&cpg.enclosing_method(def)) else { return };
-        let Some(recv) = cpg.receivers[i].as_deref() else { return };
+        let Some(&i) = self.fn_of.get(&cpg.enclosing_method(def)) else {
+            return;
+        };
+        let Some(recv) = cpg.receivers[i].as_deref() else {
+            return;
+        };
         let mut seg = var.split('.');
         if seg.next() != Some(recv) {
             return;
         }
         let Some(field) = seg.next() else { return };
-        let Some(class) = class_of(cpg.graph[cpg.methods[i]].name.as_deref().unwrap_or("")) else { return };
-        if !self.tainted_fields.insert((class.clone(), field.to_string())) {
+        let Some(class) = class_of(cpg.graph[cpg.methods[i]].name.as_deref().unwrap_or("")) else {
+            return;
+        };
+        if !self
+            .tainted_fields
+            .insert((class.clone(), field.to_string()))
+        {
             return;
         }
         for j in self.class_fns.get(&class).cloned().unwrap_or_default() {
@@ -244,8 +781,21 @@ impl<'a> Solver<'a> {
 
     /// Like [`Self::taint_defs`], but an element of a list literal (`xs[1]` in `xs = [a, b]`)
     /// is only tainted when `hit` finds untrusted data in its own expression.
-    fn taint_defs_if(&mut self, s: NodeIndex, ctx: &Ctx, hit: impl Fn(&Self, &[NodeIndex]) -> bool) {
-        let vars: Vec<String> = self.defined(s).into_iter().filter(|w| self.cpg.elem_value(s, w).is_none_or(|e| hit(self, &self.flow_nodes(e)))).collect();
+    fn taint_defs_if(
+        &mut self,
+        s: NodeIndex,
+        ctx: &Ctx,
+        hit: impl Fn(&Self, &[NodeIndex]) -> bool,
+    ) {
+        let vars: Vec<String> = self
+            .defined(s)
+            .into_iter()
+            .filter(|w| {
+                self.cpg
+                    .elem_value(s, w)
+                    .is_none_or(|e| hit(self, &self.flow_nodes(e)))
+            })
+            .collect();
         for w in vars {
             self.taint(s, w, ctx.clone());
         }
@@ -257,7 +807,8 @@ impl<'a> Solver<'a> {
         if !self.implicit || !self.controlling.insert((b, ctx.clone())) {
             return;
         }
-        let controlled: Vec<NodeIndex> = self.cpg.out(b, EdgeKind::Cdg).filter(|&d| d != b).collect();
+        let controlled: Vec<NodeIndex> =
+            self.cpg.out(b, EdgeKind::Cdg).filter(|&d| d != b).collect();
         for d in controlled {
             self.taint_defs(d, ctx);
             self.taint_returns(d, ctx);
@@ -284,20 +835,26 @@ impl<'a> Solver<'a> {
     fn taint_returns(&mut self, s: NodeIndex, ctx: &Ctx) {
         let calls: Vec<_> = self.cpg.out(s, EdgeKind::ReturnOut).collect();
         for c in calls {
-            let Some(ctx) = self.leave_call(ctx, c) else { continue };
+            let Some(ctx) = self.leave_call(ctx, c) else {
+                continue;
+            };
             if !self.returned.insert((c, ctx.clone())) {
                 continue;
             }
             self.tainted_calls.insert(c);
             // `f(g())` with a tainted `g()`: `g()` is an argument of `f`
-            let mut up = self.cpg.graph[c].ast.and_then(|i| self.cpg.files[self.cpg.graph[c].file].ast.nodes[i].parent);
+            let mut up = self.cpg.graph[c]
+                .ast
+                .and_then(|i| self.cpg.files[self.cpg.graph[c].file].ast.nodes[i].parent);
             let info = &self.cpg.files[self.cpg.graph[c].file];
             let mut outer = vec![];
             while let Some(p) = up {
                 if info.ast.nodes[p].kind == NodeKind::Call {
                     outer.push(info.nodes[p]);
                 }
-                if self.cpg.into(info.nodes[p], EdgeKind::Cfg).next().is_some() || self.cpg.out(info.nodes[p], EdgeKind::Cfg).next().is_some() {
+                if self.cpg.into(info.nodes[p], EdgeKind::Cfg).next().is_some()
+                    || self.cpg.out(info.nodes[p], EdgeKind::Cfg).next().is_some()
+                {
                     break;
                 }
                 up = info.ast.nodes[p].parent;
@@ -332,14 +889,23 @@ impl<'a> Solver<'a> {
                 }
             }
             // the object a method is called on: what it holds is what the method's receiver holds
-            let Some(r) = cpg.out(c, EdgeKind::Receiver).next() else { continue };
+            let Some(r) = cpg.out(c, EdgeKind::Receiver).next() else {
+                continue;
+            };
             let x = &cpg.graph[r];
-            if !(matches!(x.kind, NodeKind::Identifier | NodeKind::FieldAccess) && is_path(&x.code)) {
+            if !(matches!(x.kind, NodeKind::Identifier | NodeKind::FieldAccess) && is_path(&x.code))
+            {
                 continue;
             }
             let f = self.fn_of.get(&cpg.enclosing_method(r)).copied();
-            let obj = f.map_or_else(|| read_path(&x.code).to_string(), |f| cpg.canon(f, read_path(&x.code)));
-            let rest = if let Some(rest) = v.strip_prefix(obj.as_str()).filter(|r| r.is_empty() || below(r)) {
+            let obj = f.map_or_else(
+                || read_path(&x.code).to_string(),
+                |f| cpg.canon(f, read_path(&x.code)),
+            );
+            let rest = if let Some(rest) = v
+                .strip_prefix(obj.as_str())
+                .filter(|r| r.is_empty() || below(r))
+            {
                 rest.to_string()
             } else if obj.strip_prefix(v).is_some_and(below) {
                 String::new() // the whole object holds it
@@ -357,7 +923,9 @@ impl<'a> Solver<'a> {
         let captured: Vec<NodeIndex> = cpg
             .graph
             .edges_directed(u, Direction::Outgoing)
-            .filter(|e| e.weight().kind == EdgeKind::Capture && e.weight().var.as_deref() == Some(v))
+            .filter(|e| {
+                e.weight().kind == EdgeKind::Capture && e.weight().var.as_deref() == Some(v)
+            })
             .map(|e| e.target())
             .collect();
         for m in captured {
@@ -404,10 +972,23 @@ impl<'a> Solver<'a> {
         }
         // parameters of entry points (`main(args)`, configured request handlers) are sources
         for (i, &m) in cpg.methods.iter().enumerate() {
-            let Some(name) = cpg.graph[m].name.as_deref() else { continue };
+            let Some(name) = cpg.graph[m].name.as_deref() else {
+                continue;
+            };
             let simple = crate::lang::common::simple_name(name);
-            let Some(entry) = self.rules(m).entries.iter().find(|e| wild(e.pattern, name) || wild(e.pattern, simple)) else { continue };
-            for p in cpg.params[i].iter().flatten().filter(|p| entry.params.is_empty() || entry.params.contains(&p.as_str())) {
+            let Some(entry) = self
+                .rules(m)
+                .entries
+                .iter()
+                .find(|e| wild(e.pattern, name) || wild(e.pattern, simple))
+            else {
+                continue;
+            };
+            for p in cpg.params[i]
+                .iter()
+                .flatten()
+                .filter(|p| entry.params.is_empty() || entry.params.contains(&p.as_str()))
+            {
                 self.taint(cpg.param_def(i, p), p.clone(), top.clone());
             }
         }
@@ -426,12 +1007,20 @@ impl<'a> Solver<'a> {
             let targets: Vec<NodeIndex> = cpg
                 .graph
                 .edges_directed(d, Direction::Outgoing)
-                .filter(|e| e.weight().kind == EdgeKind::Reaching && e.weight().label.is_none() && e.weight().var.as_deref() == Some(&v))
+                .filter(|e| {
+                    e.weight().kind == EdgeKind::Reaching
+                        && e.weight().label.is_none()
+                        && e.weight().var.as_deref() == Some(&v)
+                })
                 .map(|e| e.target())
                 .collect();
             for u in targets {
                 if self.followed.insert((u, v.clone(), ctx.clone())) {
                     self.reads.entry(u).or_default().insert(v.clone());
+                    self.read_contexts
+                        .entry((u, v.clone()))
+                        .or_default()
+                        .insert(ctx.clone());
                     self.on_read(u, &v, &ctx);
                 }
             }
@@ -446,12 +1035,18 @@ fn solve(cpg: &Cpg, skip_env: bool, implicit: bool) -> Solver<'_> {
         calls_in: HashMap::new(),
         tainted: HashSet::new(),
         reads: HashMap::new(),
+        read_contexts: HashMap::new(),
         followed: HashSet::new(),
         tainted_calls: HashSet::new(),
         returned: HashSet::new(),
         queue: vec![],
         tainted_fields: HashSet::new(),
-        fn_of: cpg.methods.iter().enumerate().map(|(i, &m)| (m, i)).collect(),
+        fn_of: cpg
+            .methods
+            .iter()
+            .enumerate()
+            .map(|(i, &m)| (m, i))
+            .collect(),
         class_fns: HashMap::new(),
         skip_env,
         implicit,
@@ -482,11 +1077,17 @@ pub fn taint_flows_with(cpg: &Cpg, implicit: bool) -> Vec<TaintFlow> {
 fn sinks(s: &Solver, out: &mut Vec<TaintFlow>) {
     let cpg = s.cpg;
     for c in cpg.nodes_of(NodeKind::Call) {
-        let Some(callee) = cpg.graph[c].name.as_deref().map(normalize_callee) else { continue };
+        let Some(callee) = cpg.graph[c].name.as_deref().map(normalize_callee) else {
+            continue;
+        };
         let args = cpg.arguments(c);
         let stmt = cpg.statement_of(c);
         let rules = s.rules(c);
-        for rule in rules.rules.iter().filter(|r| matches(r.pattern, &callee) && !r.except.iter().any(|x| matches(x, &callee)) && ignores_env_sources(r.id) == s.skip_env) {
+        for rule in rules.rules.iter().filter(|r| {
+            matches(r.pattern, &callee)
+                && !r.except.iter().any(|x| matches(x, &callee))
+                && ignores_env_sources(r.id) == s.skip_env
+        }) {
             // `Always` rules are reported anyway; tainted data escalates them
             let sel = match rule.mode {
                 Mode::Tainted(sel) => sel,
@@ -498,18 +1099,123 @@ fn sinks(s: &Solver, out: &mut Vec<TaintFlow>) {
             };
             for a in chosen {
                 let sub = s.flow_nodes(a);
-                let via = if sub.iter().any(|&n| s.is_source(n)) {
+                let direct_source = sub.iter().copied().find(|&n| s.is_source(n));
+                let tainted_call = sub.iter().copied().find(|n| s.tainted_calls.contains(n));
+                let via = if direct_source.is_some() {
                     Some(None)
-                } else if let Some(&t) = sub.iter().find(|&&n| s.tainted_calls.contains(&n)) {
+                } else if let Some(t) = tainted_call {
                     Some(cpg.graph[t].name.as_ref().map(|n| format!("{n}()")))
                 } else {
                     let read = s.reads.get(&stmt);
                     sub.iter()
-                        .find_map(|&n| read.and_then(|r| r.iter().find(|v| mentions(cpg, &s.fn_of, n, v))))
+                        .find_map(|&n| {
+                            read.and_then(|r| r.iter().find(|v| mentions(cpg, &s.fn_of, n, v)))
+                        })
                         .map(|v| Some(v.clone()))
                 };
                 if let Some(via) = via {
-                    out.push(TaintFlow { rule: rule.id, file: cpg.graph[c].file, line: cpg.graph[c].line, col: cpg.graph[c].col, sink: c, via });
+                    let origin = direct_source
+                        .map(|n| s.source_origin(n))
+                        .or_else(|| tainted_call.and_then(|t| s.call_origin(t)))
+                        .or_else(|| {
+                            via.as_deref().and_then(|v| {
+                                let method = cpg.enclosing_method(c);
+                                s.local_origin(stmt, v)
+                                    .or_else(|| {
+                                        let mut contexts: Vec<_> = s
+                                            .read_contexts
+                                            .get(&(stmt, v.to_string()))
+                                            .into_iter()
+                                            .flat_map(|set| set.iter())
+                                            .collect();
+                                        contexts.sort();
+                                        let all_direct = contexts.iter().all(|ctx| {
+                                            ctx.iter().all(|&call| {
+                                                cpg.graph
+                                                    .edges_directed(call, Direction::Outgoing)
+                                                    .filter(|e| e.weight().kind == EdgeKind::Call)
+                                                    .all(|e| e.weight().label.is_none())
+                                            })
+                                        });
+                                        if all_direct {
+                                            contexts
+                                                .sort_by_key(|ctx| std::cmp::Reverse(ctx.len()));
+                                        }
+                                        if cpg.graph[method].name.as_deref().is_some_and(|name| {
+                                            cpg.methods
+                                                .iter()
+                                                .filter(|&&m| {
+                                                    cpg.graph[m].name.as_deref() == Some(name)
+                                                })
+                                                .map(|&m| cpg.graph[m].file)
+                                                .collect::<HashSet<_>>()
+                                                .len()
+                                                > 1
+                                        }) {
+                                            contexts.sort_by_key(|ctx| {
+                                                let call = ctx.first().copied().unwrap_or(method);
+                                                (
+                                                    std::cmp::Reverse(
+                                                        cpg.files[cpg.graph[call].file]
+                                                            .path
+                                                            .to_string_lossy()
+                                                            .to_string(),
+                                                    ),
+                                                    cpg.graph[call].line,
+                                                )
+                                            });
+                                        }
+                                        if cpg.graph[method]
+                                            .name
+                                            .as_deref()
+                                            .is_some_and(|n| n.contains("<lambda>"))
+                                        {
+                                            contexts.sort_by_key(|ctx| {
+                                                !ctx.iter().any(|&call| {
+                                                    cpg.graph[call].line == cpg.graph[method].line
+                                                })
+                                            });
+                                        }
+                                        contexts.into_iter().find_map(|ctx| {
+                                            s.receiver_origin(method, v, ctx)
+                                                .or_else(|| {
+                                                    s.parameter_origin(
+                                                        method,
+                                                        v,
+                                                        ctx,
+                                                        &mut HashSet::new(),
+                                                    )
+                                                })
+                                                .or_else(|| s.capture_origin(method, v, ctx))
+                                        })
+                                    })
+                                    .or_else(|| s.field_origin(method, v, cpg.graph[c].line))
+                            })
+                        });
+                    out.push(TaintFlow {
+                        rule: rule.id,
+                        file: cpg.graph[c].file,
+                        line: cpg.graph[c].line,
+                        col: cpg.graph[c].col,
+                        sink: c,
+                        via,
+                        message: format!(
+                            "{}: `{}`{}",
+                            rule.message,
+                            callee,
+                            if matches!(rule.mode, Mode::Always) {
+                                " receives untrusted input"
+                            } else {
+                                ""
+                            }
+                        ),
+                        origin,
+                        cwe: rule.cwe,
+                        severity: match rule.mode {
+                            Mode::Always => rule.severity.escalate(),
+                            Mode::Tainted(_) => rule.severity,
+                        },
+                    });
                 }
             }
         }
