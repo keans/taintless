@@ -1,0 +1,76 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn <module>
+  entry []
+  exit []
+  b2 [1:const f = (a, b) => (a ? b?.x : (b ?? 0));]
+  0 -normal-> 2
+  2 -normal-> 1
+fn f
+  entry []
+  exit []
+  b2 [1:a]
+  b3 [1:b]
+  b4 [1:b]
+  b5 [1:(a ? b?.x : (b ?? 0)) | 1:<return>]
+  b6 [1:b?.x]
+  b7 []
+  b8 [1:0]
+  b9 [1:(b ?? 0)]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -true-> 6
+  3 -false-> 7
+  4 -false-> 8
+  4 -true-> 9
+  5 -normal-> 1
+  6 -normal-> 7
+  7 -normal-> 5
+  8 -normal-> 9
+  9 -normal-> 5
+fn g
+  entry []
+  exit []
+  b2 [2:a]
+  b3 [2:b()]
+  b4 [2:const v = a && b(); | 2:a]
+  b5 [2:b]
+  b6 [2:return a || b;]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 4
+  4 -false-> 5
+  4 -true-> 6
+  5 -normal-> 6
+  6 -return-> 1
+fn h
+  entry []
+  exit []
+  b2 [3:o]
+  b3 [3:o?.p]
+  b4 [3:o?.p]
+  b5 [3:o?.p?.q]
+  b6 [3:return o?.p?.q(1);]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 4
+  4 -true-> 5
+  4 -false-> 6
+  5 -normal-> 6
+  6 -return-> 1
+fn t
+  entry []
+  exit []
+  b2 [4:work();]
+  b3 [4:done();]
+  b4 [4:done();]
+  0 -normal-> 2
+  2 -normal-> 3
+  2 -exception-> 4
+  3 -normal-> 1
+  4 -exception-> 1

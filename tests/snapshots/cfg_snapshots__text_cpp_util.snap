@@ -1,0 +1,15 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn Util::f
+  entry []
+  exit []
+  b2 [3:a]
+  b3 [3:return 2;]
+  b4 [3:return 1;]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1

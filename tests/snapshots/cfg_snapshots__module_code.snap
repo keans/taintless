@@ -1,0 +1,37 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// <module>
+digraph "<module>" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="1: import os\l6: __name__ == \"__main__\"\l" fillcolor="#fff4d1"];
+  n3 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n4 [label="7: main()\l" fillcolor="#dcebfa"];
+  n5 [label="6: os.environ.get(\"X\")\l" fillcolor="#fff4d1"];
+  n6 [label="6: DEBUG\l" fillcolor="#fff4d1"];
+  n0 -> n2 [];
+  n2 -> n5 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n2 -> n3 [label="false" color="#c62828" fontcolor="#c62828"];
+  n5 -> n4 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n5 -> n6 [label="false" color="#c62828" fontcolor="#c62828"];
+  n6 -> n3 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n6 -> n4 [label="false" color="#c62828" fontcolor="#c62828"];
+  n4 -> n3 [];
+  n3 -> n1 [];
+}
+// main
+digraph "main" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="4: pass\l" fillcolor="#f4f6f8"];
+  n0 -> n2 [];
+  n2 -> n1 [];
+}

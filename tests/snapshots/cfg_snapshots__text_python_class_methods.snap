@@ -1,0 +1,22 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn A.one
+  entry []
+  exit []
+  b2 [3:def inner(): | 5:return inner()]
+  0 -normal-> 2
+  2 -return-> 1
+fn A.one.inner
+  entry []
+  exit []
+  b2 [4:return 1]
+  0 -normal-> 2
+  2 -return-> 1
+fn A.two
+  entry []
+  exit []
+  b2 [8:with open("f") as fh: | 9:fh.read()]
+  0 -normal-> 2
+  2 -normal-> 1

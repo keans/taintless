@@ -1,0 +1,10 @@
+{
+  // comments and trailing commas are fine
+  "compilerOptions": {
+    "baseUrl": "src",
+    "paths": {
+      "@app/*": ["app/*"],
+      "@lib": ["lib/index.ts"],
+    },
+  },
+}

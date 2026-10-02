@@ -1,0 +1,28 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// m
+digraph "m" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="2: match cmd:\l" fillcolor="#fff4d1"];
+  n3 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6" style="rounded,filled,dashed" color="#c62828" fontcolor="#c62828"];
+  n4 [label="3: case \"go\"\l4: return 1\l" fillcolor="#fff4d1"];
+  n5 [label="5: case \"stop\"\l5: cmd\l" fillcolor="#fff4d1"];
+  n6 [label="2: default\l8: return 0\l" fillcolor="#fff4d1"];
+  n7 [label="6: return 2\l" fillcolor="#f4f6f8"];
+  n0 -> n2 [];
+  n2 -> n4 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n2 -> n5 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n2 -> n6 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n4 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n5 -> n7 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n5 -> n6 [label="false" color="#c62828" fontcolor="#c62828"];
+  n7 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n6 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n3 -> n1 [];
+}

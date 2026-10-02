@@ -1,0 +1,15 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn t
+  entry []
+  exit []
+  b2 [3:a() | 7:c()]
+  b3 [8:return 1]
+  b4 [4:except E: | 5:b()]
+  0 -normal-> 2
+  2 -normal-> 3
+  2 -exception-> 4
+  3 -return-> 1
+  4 -normal-> 3

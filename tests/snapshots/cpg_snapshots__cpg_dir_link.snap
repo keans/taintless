@@ -1,0 +1,36 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 4, "call": 16, "field_access": 21, "file": 10, "identifier": 71, "literal": 1, "local": 3, "method": 23, "method_return": 24, "other": 320, "param": 12, "type": 8, "type_decl": 13}
+edges: {"ast": 481, "call": 30, "cdg": 24, "cfg": 48, "contains": 58, "imports": 2, "reaching": 37, "receiver": 16, "ref": 15, "scope": 36, "type_of": 8}
+call H.viaDefined -> Other.run
+call H.viaDefined -> Runner.run
+call Svc.shadowed -> Other.run
+call Svc.shadowed -> Runner.run
+call Svc.viaAlias -> Other.run
+call Svc.viaAlias -> Runner.run
+call Svc.viaField -> Other.run
+call Svc.viaField -> Runner.run
+call Svc::viaAlias -> Other::run
+call Svc::viaAlias -> Runner::run
+call Svc::viaField -> Other::run
+call Svc::viaField -> Runner::run
+call Svc::viaTypedef -> Other::run
+call Svc::viaTypedef -> Runner::run
+call Svc::via_alias -> Other::run
+call Svc::via_alias -> Runner::run
+call Svc::via_field -> Other::run
+call Svc::via_field -> Runner::run
+call viaAliasParam -> Other.run
+call viaAliasParam -> Other::run
+call viaAliasParam -> Runner.run
+call viaAliasParam -> Runner::run
+call via_alias -> Other.run
+call via_alias -> Runner.run
+call via_alias_param -> Other::run
+call via_alias_param -> Runner::run
+call via_annotated -> Other.run
+call via_annotated -> Runner.run
+call via_statement -> Other.run
+call via_statement -> Runner.run

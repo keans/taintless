@@ -1,0 +1,4 @@
+disable = ["weak-crypto"]
+
+[severity]
+command-injection = "low"

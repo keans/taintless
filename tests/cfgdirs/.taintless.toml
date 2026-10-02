@@ -1,0 +1,11 @@
+extends = ["base.toml"]
+
+[severity]
+command-injection = "medium"
+
+[rule.sql-injection]
+exclude = ["**/other/**"]
+
+[[source]]
+call = "myapp.read"
+message = "comes from the HTTP layer"

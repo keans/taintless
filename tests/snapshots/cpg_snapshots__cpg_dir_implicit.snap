@@ -1,0 +1,7 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 14, "call": 11, "control": 7, "field_access": 5, "file": 1, "identifier": 48, "literal": 14, "local": 9, "method": 6, "method_return": 6, "other": 92, "param": 1, "return": 1}
+edges: {"argument": 7, "ast": 199, "call": 1, "cdg": 26, "cfg": 38, "contains": 21, "param_in": 1, "reaching": 18, "receiver": 5, "ref": 25, "return_out": 1, "scope": 6}
+call caller -> via_param

@@ -1,0 +1,58 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn a
+  entry []
+  exit []
+  b2 [4:switch x {]
+  b3 [13:return x]
+  b4 [5:case 1 | 6:x++]
+  b5 [8:case 2 | 9:x += 2]
+  b6 [4:default | 11:x = 0]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  2 -true-> 6
+  3 -return-> 1
+  4 -normal-> 5
+  5 -normal-> 3
+  6 -normal-> 3
+fn b
+  entry []
+  exit []
+  b2 [17:defer func() { | 22:panic("boom") | 17:deferred func() {]
+  0 -normal-> 2
+  2 -return-> 1
+fn b.<anon>
+  entry []
+  exit []
+  b2 [18:r := recover() | 18:r != nil]
+  b3 []
+  b4 [19:err = nil]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -normal-> 1
+  4 -normal-> 3
+fn c
+  entry []
+  exit []
+  b2 [26:switch v.(type) {]
+  b3 [30:return 0]
+  b4 [27:case int, int64 | 28:return 1]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1
+fn d
+  entry []
+  exit []
+  b2 [34:select {]
+  b3 []
+  b4 [35:case <-ch]
+  0 -normal-> 2
+  2 -true-> 4
+  3 -normal-> 1
+  4 -normal-> 3

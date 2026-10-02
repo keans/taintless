@@ -1,0 +1,45 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn r
+  entry []
+  exit []
+  b2 [2:let mut it = v.into_iter();]
+  b3 [3:let Some(x) = it.next()]
+  b4 [6:match a {]
+  b5 [4:let Some(y) = x]
+  b6 []
+  b7 [4:return y]
+  b8 [4:a]
+  b9 []
+  b10 []
+  b11 [4:b]
+  b12 []
+  b13 [7:case true | 7:b]
+  b14 [8:case true | 8:2]
+  b15 [9:case false | 9:3]
+  b16 [7:1]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -true-> 13
+  4 -true-> 14
+  4 -true-> 15
+  5 -true-> 7
+  5 -false-> 8
+  6 -back-> 3
+  7 -return-> 1
+  8 -false-> 9
+  8 -true-> 11
+  9 -normal-> 6
+  10 -break-> 4
+  11 -true-> 9
+  11 -false-> 10
+  12 -normal-> 1
+  13 -false-> 14
+  13 -true-> 16
+  14 -normal-> 12
+  15 -normal-> 12
+  16 -normal-> 12

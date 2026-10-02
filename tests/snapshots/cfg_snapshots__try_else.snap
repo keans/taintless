@@ -1,0 +1,20 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// t
+digraph "t" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="3: a()\l7: c()\l" fillcolor="#dcebfa"];
+  n3 [label="8: return 1\l" fillcolor="#f4f6f8"];
+  n4 [label="4: except E:\l5: b()\l" fillcolor="#fff4d1"];
+  n0 -> n2 [];
+  n2 -> n4 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n2 -> n3 [];
+  n4 -> n3 [];
+  n3 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+}

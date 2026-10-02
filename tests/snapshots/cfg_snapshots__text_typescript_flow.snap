@@ -1,0 +1,50 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn pick
+  entry []
+  exit []
+  b2 [4:kind === "a"]
+  b3 [13:return n;]
+  b4 [5:return 1;]
+  b5 [6:kind === "b"]
+  b6 []
+  b7 [7:let i = 0;]
+  b8 [11:throw new Error("bad");]
+  b9 [7:i < n]
+  b10 []
+  b11 [8:i === 3]
+  b12 [7:i++]
+  b13 []
+  b14 []
+  0 -normal-> 2
+  2 -true-> 4
+  2 -false-> 5
+  3 -return-> 1
+  4 -return-> 1
+  5 -true-> 7
+  5 -false-> 8
+  6 -normal-> 3
+  7 -normal-> 9
+  8 -exception-> 1
+  9 -false-> 10
+  9 -true-> 11
+  10 -normal-> 6
+  11 -false-> 13
+  11 -true-> 14
+  12 -back-> 9
+  13 -normal-> 12
+  14 -break-> 10
+fn Box.constructor
+  entry []
+  exit []
+  b2 []
+  0 -normal-> 2
+  2 -normal-> 1
+fn Box.get
+  entry []
+  exit []
+  b2 [18:return this.v;]
+  0 -normal-> 2
+  2 -return-> 1

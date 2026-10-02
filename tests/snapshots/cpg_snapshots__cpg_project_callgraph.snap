@@ -1,0 +1,45 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 14, "binary_op": 2, "call": 37, "field": 8, "field_access": 28, "file": 11, "identifier": 133, "literal": 8, "local": 10, "method": 49, "method_return": 49, "other": 382, "param": 19, "return": 6, "type": 7, "type_decl": 27}
+edges: {"argument": 4, "ast": 705, "call": 39, "cdg": 50, "cfg": 99, "contains": 123, "imports": 1, "param_in": 2, "param_out": 2, "reaching": 61, "receiver": 20, "ref": 42, "return_out": 9, "scope": 76, "type_of": 13}
+call Holder.__init__ -> Svc.__init__
+call Holder.start -> Runner.run
+call Holder.start -> Runner.run
+call K.run -> K.step
+call K.step -> helper
+call Svc.go -> Runner.run
+call Svc.go -> Runner.run
+call Svc.go -> Runner.run
+call Svc.go -> Runner.run
+call Svc.go -> Runner.run
+call Svc.go -> Runner.run
+call Svc.go_ -> Runner.run
+call Svc.local -> Runner.run
+call Svc.local -> Runner.run
+call Svc.local -> Runner.run
+call Svc.local -> Runner.run
+call Svc.local -> Runner.run
+call Svc.local -> Svc.make
+call Svc.local -> Svc.make
+call Svc.local -> make
+call Svc::go_ -> Runner::run
+call Svc::go_ -> Runner::run
+call Svc::local -> Runner::run
+call Svc::local -> Runner::run
+call fact -> fact
+call local -> helper
+call main -> Runner.run
+call main -> Runner.run
+call main -> Runner.run
+call main -> Runner.run
+call main -> Svc.__init__
+call main -> Svc.go
+call main -> Svc.go
+call main -> fact
+call main -> helper
+call main -> local
+call main -> make
+call use -> A.Run
+call use -> B.Run

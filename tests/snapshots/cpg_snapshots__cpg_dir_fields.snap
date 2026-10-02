@@ -1,0 +1,67 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 84, "binary_op": 1, "call": 145, "control": 1, "field": 19, "field_access": 130, "file": 10, "identifier": 509, "literal": 37, "local": 45, "method": 68, "method_return": 70, "other": 637, "param": 47, "return": 4, "type": 5, "type_decl": 14}
+edges: {"argument": 96, "ast": 1677, "call": 61, "cdg": 155, "cfg": 230, "contains": 207, "param_in": 50, "param_out": 28, "reaching": 235, "receiver": 61, "ref": 215, "return_out": 6, "scope": 82, "type_of": 8}
+call ? -> run
+call Bus.__init__ -> run
+call Bus.fire -> run
+call Bus.fire_all -> run
+call Bus.fire_safe -> log
+call S.Run -> S.Run
+call S.Run -> S.Run
+call apply -> ho_lambda.<lambda>
+call apply -> ho_lambda.<lambda>
+call apply -> sink
+call apply -> sink
+call apply_ret -> ho_ret.<lambda>
+call apply_ret -> ho_ret.<lambda>
+call clean -> Req.__init__
+call clean_cb -> apply
+call clean_control -> Req.__init__
+call clean_control -> Req.__init__
+call copied -> Req.__init__
+call dispatch -> log
+call dispatch -> run
+call drain -> run
+call ho_lambda -> apply
+call ho_named -> apply
+call ho_named -> sink
+call ho_ret -> apply_ret
+call list_append_is_not_a_field_write -> Req.__init__
+call local_alias -> run
+call local_table -> run
+call main -> Job.__init__
+call main -> Job.run
+call make -> Runner.set
+call one_branch -> Req.__init__
+call one_branch -> Req.__init__
+call only_log -> log
+call other_element_stays_clean -> Req.__init__
+call other_element_stays_clean -> Req.__init__
+call overwritten -> Req.__init__
+call overwritten_through_alias -> Req.__init__
+call rebound -> Req.__init__
+call rebound -> Req.__init__
+call recv_field -> Runner.run
+call recv_return -> Runner.get
+call same_element_is_tainted -> Req.__init__
+call same_element_is_tainted -> Req.__init__
+call tainted -> Req.__init__
+call tainted -> Req.run
+call through_call -> Req.__init__
+call through_call -> fill
+call through_field -> Holder.__init__
+call through_field -> Req.__init__
+call through_identity -> Req.__init__
+call through_identity -> through_return
+call through_list -> Req.__init__
+call typed_call -> Runner.go
+call use_bus -> Bus.__init__
+call use_bus -> Bus.fire
+call via_factory -> make
+call via_factory -> run
+call via_setter -> Runner.run
+call via_setter -> Runner.set
+call write_through -> Req.__init__

@@ -1,0 +1,25 @@
+# Build output
+/target/
+
+# Generated graphs
+*.svg
+
+# insta pending snapshots
+*.snap.new
+.pending-snap
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Profiling / debug artifacts
+*.profraw
+flamegraph.svg
+perf.data*
+
+# Local environment
+.env

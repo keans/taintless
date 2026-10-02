@@ -1,0 +1,53 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// f
+digraph "f" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="3: x\l" fillcolor="#fff4d1"];
+  n3 [label="9: cleanup()\l" fillcolor="#dcebfa" style="rounded,filled,dashed" color="#c62828" fontcolor="#c62828"];
+  n4 [label="6: except ValueError:\l7: raise\l9: cleanup()\l" fillcolor="#fff4d1"];
+  n5 [label="5: raise ValueError(\"bad\")\l" fillcolor="#f4f6f8"];
+  n6 [label="4: return 1\l9: cleanup()\l" fillcolor="#dcebfa"];
+  n0 -> n2 [];
+  n2 -> n4 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n2 -> n6 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n2 -> n5 [label="false" color="#c62828" fontcolor="#c62828"];
+  n6 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n5 -> n4 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n4 -> n1 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n3 -> n1 [];
+}
+// g
+digraph "g" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n3 [label="13: for it in items:\l" fillcolor="#fff4d1"];
+  n4 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n5 [label="15: it\l" fillcolor="#fff4d1"];
+  n6 [label="19: release(it)\l" fillcolor="#dcebfa" style="rounded,filled,dashed" color="#c62828" fontcolor="#c62828"];
+  n7 [label="19: release(it)\l" fillcolor="#dcebfa"];
+  n8 [label="19: release(it)\l" fillcolor="#dcebfa"];
+  n9 [label="19: release(it)\l" fillcolor="#dcebfa"];
+  n0 -> n2 [];
+  n2 -> n3 [];
+  n3 -> n5 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n3 -> n4 [label="false" color="#c62828" fontcolor="#c62828"];
+  n5 -> n7 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n5 -> n9 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n5 -> n8 [label="false" color="#c62828" fontcolor="#c62828"];
+  n9 -> n4 [label="break" color="#ef6c00" fontcolor="#ef6c00"];
+  n8 -> n3 [label="continue" color="#ef6c00" fontcolor="#ef6c00"];
+  n7 -> n1 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n6 -> n3 [label="back" color="#1565c0" fontcolor="#1565c0" style=dashed];
+  n4 -> n1 [];
+}

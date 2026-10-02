@@ -1,0 +1,90 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn run
+  entry []
+  exit []
+  b2 [6:total := 0]
+  b3 []
+  b4 [8:for i, x := range xs {]
+  b5 []
+  b6 [9:j := 0]
+  b7 [9:j < x]
+  b8 [18:_ = i]
+  b9 [10:j == 3]
+  b10 [9:j++]
+  b11 [13:total > 100]
+  b12 []
+  b13 [16:total += j]
+  b14 []
+  b15 [20:total > 10]
+  b16 []
+  b17 [21:total -= 10]
+  b18 [23:loop]
+  b19 [29:switch mode {]
+  b20 [24:total++ | 25:total > 20]
+  b21 []
+  b22 []
+  b23 [38:err := check(total) | 38:err != nil]
+  b24 [30:case "a" | 31:total++]
+  b25 [32:case "b", "c" | 33:total += 2]
+  b26 [29:default | 35:defer fmt.Println("done") | 36:return -1 | 35:deferred fmt.Println("done")]
+  b27 [41:goto end]
+  b28 [39:panic(err)]
+  b29 [43:return total]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -normal-> 4
+  4 -false-> 5
+  4 -true-> 6
+  5 -normal-> 15
+  6 -normal-> 7
+  7 -false-> 8
+  7 -true-> 9
+  8 -back-> 4
+  9 -false-> 11
+  9 -true-> 12
+  10 -back-> 7
+  11 -false-> 13
+  11 -true-> 14
+  12 -continue-> 4
+  13 -normal-> 10
+  14 -break-> 5
+  15 -false-> 16
+  15 -true-> 17
+  16 -normal-> 18
+  17 -back-> 15
+  18 -normal-> 20
+  19 -true-> 24
+  19 -true-> 25
+  19 -true-> 26
+  20 -false-> 21
+  20 -true-> 22
+  21 -back-> 18
+  22 -break-> 19
+  23 -false-> 27
+  23 -true-> 28
+  24 -normal-> 23
+  25 -normal-> 23
+  26 -return-> 1
+  27 -normal-> 29
+  28 -exception-> 1
+  29 -return-> 1
+fn T.Method
+  entry []
+  exit []
+  b2 [49:v > 0]
+  b3 [52:f := func() int { return 1 } | 53:return f()]
+  b4 [50:return v]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1
+fn Method.<anon>
+  entry []
+  exit []
+  b2 [52:return 1]
+  0 -normal-> 2
+  2 -return-> 1

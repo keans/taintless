@@ -1,0 +1,21 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn g
+  entry []
+  exit []
+  b2 [2:auto h = [](int x) { if (x > 0) { return 1; } return 2; }; | 3:return h(a);]
+  0 -normal-> 2
+  2 -return-> 1
+fn g::<lambda>
+  entry []
+  exit []
+  b2 [2:x > 0]
+  b3 [2:return 2;]
+  b4 [2:return 1;]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1

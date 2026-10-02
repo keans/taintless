@@ -1,0 +1,7 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 1, "call": 3, "control": 1, "field_access": 1, "file": 1, "identifier": 9, "literal": 2, "local": 2, "method": 3, "method_return": 3, "other": 18, "param": 2, "return": 2, "type_decl": 1}
+edges: {"argument": 1, "ast": 43, "call": 1, "cdg": 5, "cfg": 8, "contains": 8, "reaching": 2, "receiver": 1, "ref": 4, "return_out": 1, "scope": 4}
+call A.one -> A.one.inner

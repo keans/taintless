@@ -1,0 +1,15 @@
+[[source]]
+language = "python"
+call = "myapp.read_request"
+
+[[sanitizer]]
+call = "myapp.clean"
+
+[[sink]]
+call = "myapp.db.raw_query"
+rule = "sql-injection"
+arg = 0
+
+[[entry]]
+function = "handler"
+params = ["data"]

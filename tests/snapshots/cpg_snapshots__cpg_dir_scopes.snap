@@ -1,0 +1,26 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 19, "call": 34, "control": 1, "field_access": 17, "file": 4, "identifier": 91, "literal": 9, "local": 10, "method": 21, "method_return": 21, "other": 192, "param": 7, "return": 2, "type_decl": 8}
+edges: {"argument": 8, "ast": 401, "call": 20, "cdg": 41, "cfg": 66, "contains": 52, "param_in": 6, "reaching": 45, "receiver": 14, "ref": 35, "return_out": 4, "scope": 29}
+call branches -> A.run
+call branches -> B.run
+call inner_gets_the_tainted_call -> B.run
+call loop_changes_it -> A.run
+call loop_changes_it -> B.run
+call outerResumes -> A.Run
+call outerResumes -> B.Run
+call outerResumes -> NewA
+call outerResumes -> NewB
+call outer_resumes -> A.run
+call outer_resumes -> A::new
+call outer_resumes -> A::run
+call outer_resumes -> B.run
+call outer_resumes -> B::new
+call outer_resumes -> B::run
+call reassigned -> A.run
+call sequence -> A.run
+call sequence -> B.run
+call sibling -> A.run
+call sibling -> B.run

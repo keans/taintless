@@ -1,0 +1,5 @@
+[project]
+name = "mypkg"
+
+[tool.setuptools.packages.find]
+where = ["lib"]

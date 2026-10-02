@@ -1,0 +1,54 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// f
+digraph "f" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n3 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6" style="rounded,filled,dashed" color="#c62828" fontcolor="#c62828"];
+  n4 [label="2: for x in xs\l" fillcolor="#fff4d1"];
+  n5 [label="2: x > 0\l" fillcolor="#fff4d1"];
+  n6 [label="2: ys = [x * 2 for x in xs if x > 0 if x < 10]\l3: b\l" fillcolor="#fff4d1"];
+  n7 [label="2: x < 10\l" fillcolor="#fff4d1"];
+  n8 [label="2: x * 2\l" fillcolor="#f4f6f8"];
+  n9 [label="3: a\l" fillcolor="#f4f6f8"];
+  n10 [label="3: None\l" fillcolor="#f4f6f8"];
+  n11 [label="3: z = a if b else None\l4: a\l" fillcolor="#fff4d1"];
+  n12 [label="4: b()\l" fillcolor="#dcebfa"];
+  n13 [label="4: ok = a and b()\l5: match a:\l" fillcolor="#fff4d1"];
+  n14 [label="12: return ys, z, ok\l" fillcolor="#f4f6f8" style="rounded,filled,dashed" color="#c62828" fontcolor="#c62828"];
+  n15 [label="6: case 1\l6: b\l" fillcolor="#fff4d1"];
+  n16 [label="8: case 2 | 3\l9: return 2\l" fillcolor="#fff4d1"];
+  n17 [label="5: default\l11: return 0\l" fillcolor="#fff4d1"];
+  n18 [label="7: return 1\l" fillcolor="#f4f6f8"];
+  n0 -> n2 [];
+  n2 -> n4 [];
+  n4 -> n5 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n4 -> n6 [label="false" color="#c62828" fontcolor="#c62828"];
+  n5 -> n7 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n5 -> n4 [label="false" color="#c62828" fontcolor="#c62828"];
+  n7 -> n8 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n7 -> n4 [label="false" color="#c62828" fontcolor="#c62828"];
+  n8 -> n4 [label="back" color="#1565c0" fontcolor="#1565c0" style=dashed];
+  n6 -> n9 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n6 -> n10 [label="false" color="#c62828" fontcolor="#c62828"];
+  n9 -> n11 [];
+  n10 -> n11 [];
+  n11 -> n12 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n11 -> n13 [label="false" color="#c62828" fontcolor="#c62828"];
+  n12 -> n13 [];
+  n13 -> n15 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n13 -> n16 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n13 -> n17 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n15 -> n18 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n15 -> n16 [label="false" color="#c62828" fontcolor="#c62828"];
+  n18 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n16 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n17 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n14 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+}

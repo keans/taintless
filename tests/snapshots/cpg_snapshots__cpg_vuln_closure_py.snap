@@ -1,0 +1,7 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 2, "call": 3, "field_access": 1, "file": 1, "identifier": 9, "local": 2, "method": 2, "method_return": 2, "other": 10}
+edges: {"argument": 1, "ast": 27, "call": 1, "capture": 2, "cdg": 4, "cfg": 7, "contains": 6, "reaching": 4, "receiver": 1, "ref": 4, "return_out": 1, "scope": 2}
+call run -> run.go

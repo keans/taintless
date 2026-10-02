@@ -1,0 +1,43 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn f
+  entry []
+  exit []
+  b2 [3:x]
+  b3 !dead [9:cleanup()]
+  b4 [6:except ValueError: | 7:raise | 9:cleanup()]
+  b5 [5:raise ValueError("bad")]
+  b6 [4:return 1 | 9:cleanup()]
+  0 -normal-> 2
+  2 -exception-> 4
+  2 -false-> 5
+  2 -true-> 6
+  3 -normal-> 1
+  4 -exception-> 1
+  5 -exception-> 4
+  6 -return-> 1
+fn g
+  entry []
+  exit []
+  b2 []
+  b3 [13:for it in items:]
+  b4 []
+  b5 [15:it]
+  b6 !dead [19:release(it)]
+  b7 [19:release(it)]
+  b8 [19:release(it)]
+  b9 [19:release(it)]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 1
+  5 -exception-> 7
+  5 -false-> 8
+  5 -true-> 9
+  6 -back-> 3
+  7 -exception-> 1
+  8 -continue-> 3
+  9 -break-> 4

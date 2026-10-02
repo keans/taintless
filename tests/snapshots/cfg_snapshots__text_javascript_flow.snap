@@ -1,0 +1,110 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn <module>
+  entry []
+  exit []
+  b2 [31:const arrow = (a) => (a ? 1 : 2); | 32:const block = (a) => { if (a) { return 1; } return 2; };]
+  0 -normal-> 2
+  2 -normal-> 1
+fn scan
+  entry []
+  exit []
+  b2 [2:let total = 0;]
+  b3 [3:let i = 0;]
+  b4 [3:i < items.length]
+  b5 []
+  b6 []
+  b7 [3:i++]
+  b8 [4:for (const x of items[i]) {]
+  b9 []
+  b10 [5:x < 0]
+  b11 [6:x > 100]
+  b12 []
+  b13 [7:total += x;]
+  b14 []
+  b15 [10:total > 10]
+  b16 []
+  b17 [10:total -= 10;]
+  b18 [11:total++;]
+  b19 [11:total < 5]
+  b20 [12:switch (mode) {]
+  b21 [22:risky(total);]
+  b22 [13:case "a" | 14:total += 1;]
+  b23 [15:case "b" | 16:total += 2;]
+  b24 [12:default | 19:return -1;]
+  b25 [26:cleanup(); | 28:return total;]
+  b26 [23:catch (e) { | 24:throw e; | 26:cleanup();]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -normal-> 4
+  4 -false-> 5
+  4 -true-> 6
+  5 -normal-> 15
+  6 -normal-> 8
+  7 -back-> 4
+  8 -false-> 9
+  8 -true-> 10
+  9 -normal-> 7
+  10 -false-> 11
+  10 -true-> 12
+  11 -false-> 13
+  11 -true-> 14
+  12 -continue-> 7
+  13 -back-> 8
+  14 -break-> 5
+  15 -false-> 16
+  15 -true-> 17
+  16 -normal-> 18
+  17 -back-> 15
+  18 -normal-> 19
+  19 -back-> 18
+  19 -false-> 20
+  20 -true-> 22
+  20 -true-> 23
+  20 -true-> 24
+  21 -normal-> 25
+  21 -exception-> 26
+  22 -normal-> 23
+  23 -break-> 21
+  24 -return-> 1
+  25 -return-> 1
+  26 -exception-> 1
+fn arrow
+  entry []
+  exit []
+  b2 [31:a]
+  b3 [31:1]
+  b4 [31:2]
+  b5 [31:(a ? 1 : 2) | 31:<return>]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 5
+  4 -normal-> 5
+  5 -normal-> 1
+fn block
+  entry []
+  exit []
+  b2 [32:a]
+  b3 [32:return 2;]
+  b4 [32:return 1;]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1
+fn K.method
+  entry []
+  exit []
+  b2 [35:x]
+  b3 [35:1]
+  b4 [35:0]
+  b5 [35:return x ? 1 : 0;]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 5
+  4 -normal-> 5
+  5 -return-> 1

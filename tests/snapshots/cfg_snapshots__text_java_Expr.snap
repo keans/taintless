@@ -1,0 +1,59 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn Expr.s
+  entry []
+  exit []
+  b2 [3:switch (k) { case 1, 2 -> "low"; default -> "high"; }]
+  b3 [3:return switch (k) { case 1, 2 -> "low"; default -> "high"; };]
+  b4 [3:case 1, 2 | 3:"low";]
+  b5 [3:default | 3:"high";]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  3 -return-> 1
+  4 -normal-> 3
+  5 -normal-> 3
+fn Expr.t
+  entry []
+  exit []
+  b2 [5:a]
+  b3 [5:1]
+  b4 [5:2]
+  b5 [5:return a ? 1 : 2;]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 5
+  4 -normal-> 5
+  5 -return-> 1
+fn Expr.r
+  entry []
+  exit []
+  b2 [7:var r = open() | 8:check()]
+  b3 []
+  b4 [10:catch (Exception e) { | 11:log(e);]
+  b5 [7:r.close()]
+  b6 [9:use(r); | 7:r.close()]
+  b7 [8:return; | 7:r.close()]
+  0 -normal-> 2
+  2 -exception-> 5
+  2 -false-> 6
+  2 -true-> 7
+  3 -normal-> 1
+  4 -normal-> 3
+  5 -exception-> 4
+  6 -normal-> 3
+  7 -return-> 1
+fn Expr.f
+  entry []
+  exit []
+  b2 [14:work();]
+  b3 [14:done();]
+  b4 [14:done();]
+  0 -normal-> 2
+  2 -normal-> 3
+  2 -exception-> 4
+  3 -normal-> 1
+  4 -exception-> 1

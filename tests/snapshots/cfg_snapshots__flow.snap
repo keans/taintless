@@ -1,0 +1,41 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// f
+digraph "f" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="2: total = 0\l" fillcolor="#f4f6f8"];
+  n3 [label="3: for x in xs:\l" fillcolor="#fff4d1"];
+  n4 [label="11: eval(str(total))\l" fillcolor="#dcebfa"];
+  n5 [label="4: x < 0\l" fillcolor="#fff4d1"];
+  n6 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n7 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n8 [label="6: x > 100\l" fillcolor="#fff4d1"];
+  n9 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n10 [label="" shape=circle width=0.12 height=0.12 fixedsize=true fillcolor="#8a94a6"];
+  n11 [label="9: total += x\l" fillcolor="#f4f6f8"];
+  n12 [label="15: print(\"done\")\l16: return total\l" fillcolor="#dcebfa"];
+  n13 [label="12: except ValueError:\l13: return -1\l15: print(\"done\")\l" fillcolor="#fff4d1"];
+  n0 -> n2 [];
+  n2 -> n3 [];
+  n3 -> n5 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n3 -> n4 [label="false" color="#c62828" fontcolor="#c62828"];
+  n5 -> n7 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n5 -> n8 [label="false" color="#c62828" fontcolor="#c62828"];
+  n7 -> n3 [label="continue" color="#ef6c00" fontcolor="#ef6c00"];
+  n8 -> n10 [label="true" color="#2e7d32" fontcolor="#2e7d32"];
+  n8 -> n11 [label="false" color="#c62828" fontcolor="#c62828"];
+  n10 -> n4 [label="break" color="#ef6c00" fontcolor="#ef6c00"];
+  n11 -> n9 [];
+  n9 -> n6 [];
+  n6 -> n3 [label="back" color="#1565c0" fontcolor="#1565c0" style=dashed];
+  n4 -> n13 [label="exc" color="#7b1fa2" fontcolor="#7b1fa2" style=dashed];
+  n4 -> n12 [];
+  n13 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+  n12 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+}

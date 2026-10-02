@@ -1,0 +1,72 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn run
+  entry []
+  exit []
+  b2 [4:int total = 0; | 5:int i = 0;]
+  b3 [5:i < n]
+  b4 []
+  b5 [6:xs[i] < 0]
+  b6 [5:i++]
+  b7 [7:xs[i] > 100]
+  b8 []
+  b9 [8:total += xs[i];]
+  b10 []
+  b11 [10:total > 10]
+  b12 []
+  b13 [10:total -= 10;]
+  b14 [11:total++;]
+  b15 [11:total < 5]
+  b16 [12:switch (mode) {]
+  b17 [21:total == 7]
+  b18 [13:case 1 | 14:total += 1;]
+  b19 [15:case 2 | 16:total += 2;]
+  b20 [12:default | 19:return -1;]
+  b21 [22:total *= 2;]
+  b22 [21:goto done;]
+  b23 [24:printf("%d\n", total); | 25:return total;]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 11
+  5 -false-> 7
+  5 -true-> 8
+  6 -back-> 3
+  7 -false-> 9
+  7 -true-> 10
+  8 -continue-> 6
+  9 -normal-> 6
+  10 -break-> 4
+  11 -false-> 12
+  11 -true-> 13
+  12 -normal-> 14
+  13 -back-> 11
+  14 -normal-> 15
+  15 -back-> 14
+  15 -false-> 16
+  16 -true-> 18
+  16 -true-> 19
+  16 -true-> 20
+  17 -false-> 21
+  17 -true-> 22
+  18 -normal-> 19
+  19 -break-> 17
+  20 -return-> 1
+  21 -normal-> 23
+  22 -normal-> 23
+  23 -return-> 1
+fn spin
+  entry []
+  exit !dead []
+  b2 []
+  b3 [28:loop]
+  b4 !dead []
+  b5 []
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -normal-> 5
+  4 -normal-> 1
+  5 -back-> 3

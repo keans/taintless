@@ -1,0 +1,89 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn Flow.run
+  entry []
+  exit []
+  b2 [3:int total = 0;]
+  b3 [5:int i = 0;]
+  b4 [5:i < xs.length]
+  b5 []
+  b6 []
+  b7 [5:i++]
+  b8 [6:for (int x : xs) {]
+  b9 []
+  b10 [7:x < 0]
+  b11 [8:x > 100]
+  b12 []
+  b13 [9:total += x;]
+  b14 []
+  b15 [12:total > 10]
+  b16 []
+  b17 [12:total -= 10;]
+  b18 [13:total++;]
+  b19 [13:total < 5]
+  b20 [14:switch (mode) {]
+  b21 [24:risky(total);]
+  b22 [15:case "a" | 16:total += 1;]
+  b23 [17:case "b" | 18:total += 2;]
+  b24 [14:default | 21:return -1;]
+  b25 [30:cleanup(); | 32:return total;]
+  b26 [25:catch (IllegalStateException e) { | 26:throw e; | 30:cleanup();]
+  b27 [27:catch (RuntimeException e) { | 28:total = 0;]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -normal-> 4
+  4 -false-> 5
+  4 -true-> 6
+  5 -normal-> 15
+  6 -normal-> 8
+  7 -back-> 4
+  8 -false-> 9
+  8 -true-> 10
+  9 -normal-> 7
+  10 -false-> 11
+  10 -true-> 12
+  11 -false-> 13
+  11 -true-> 14
+  12 -continue-> 7
+  13 -back-> 8
+  14 -break-> 5
+  15 -false-> 16
+  15 -true-> 17
+  16 -normal-> 18
+  17 -back-> 15
+  18 -normal-> 19
+  19 -back-> 18
+  19 -false-> 20
+  20 -true-> 22
+  20 -true-> 23
+  20 -true-> 24
+  21 -normal-> 25
+  21 -exception-> 26
+  21 -exception-> 27
+  22 -normal-> 23
+  23 -break-> 21
+  24 -return-> 1
+  25 -return-> 1
+  26 -exception-> 1
+  27 -normal-> 25
+fn Flow.Flow
+  entry []
+  exit []
+  b2 [35:init();]
+  0 -normal-> 2
+  2 -normal-> 1
+fn Flow.arrow
+  entry []
+  exit []
+  b2 [38:switch (k) {]
+  b3 [38:return switch (k) {]
+  b4 [39:case 1 | 39:"one";]
+  b5 [38:default | 40:"other";]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  3 -return-> 1
+  4 -normal-> 3
+  5 -normal-> 3

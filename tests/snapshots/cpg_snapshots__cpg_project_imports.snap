@@ -1,0 +1,10 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"call": 8, "field_access": 5, "file": 7, "identifier": 24, "literal": 3, "method": 7, "method_return": 7, "other": 58, "param": 4, "return": 1, "type": 2}
+edges: {"argument": 5, "ast": 110, "call": 4, "cdg": 6, "cfg": 13, "contains": 16, "imports": 3, "param_in": 3, "reaching": 6, "receiver": 4, "ref": 3, "return_out": 1, "scope": 7, "type_of": 2}
+call Run -> Run
+call main -> Run
+call main -> go
+call main -> go

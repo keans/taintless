@@ -1,0 +1,37 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+// A.one
+digraph "A.one" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="3: def inner():\l5: return inner()\l" fillcolor="#f4f6f8"];
+  n0 -> n2 [];
+  n2 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+}
+// A.one.inner
+digraph "A.one.inner" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="4: return 1\l" fillcolor="#f4f6f8"];
+  n0 -> n2 [];
+  n2 -> n1 [label="return" color="#6d4c41" fontcolor="#6d4c41"];
+}
+// A.two
+digraph "A.two" {
+graph [fontname="Helvetica" fontsize=12 style="rounded" color="#b0b7c3" labeljust=l];
+  node [shape=box style="rounded,filled" fillcolor="#f4f6f8" color="#8a94a6" fontname="Menlo" fontsize=10];
+  edge [fontname="Helvetica" fontsize=9 color="#5b6573"];
+  n0 [label="entry" shape=oval fillcolor="#d7efdc"];
+  n1 [label="exit" shape=oval fillcolor="#f4d6d6"];
+  n2 [label="8: with open(\"f\") as fh:\l9: fh.read()\l" fillcolor="#dcebfa"];
+  n0 -> n2 [];
+  n2 -> n1 [];
+}

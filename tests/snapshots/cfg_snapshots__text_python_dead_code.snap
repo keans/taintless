@@ -1,0 +1,19 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn early
+  entry []
+  exit []
+  b2 [2:x]
+  b3 [5:return 2]
+  b4 [3:return 1]
+  b5 !dead [4:print("unreachable")]
+  b6 !dead [6:print("also unreachable")]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1
+  5 -normal-> 3
+  6 -normal-> 1

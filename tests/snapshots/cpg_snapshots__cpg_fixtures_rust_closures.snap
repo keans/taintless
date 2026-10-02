@@ -1,0 +1,7 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 2, "binary_op": 1, "call": 1, "control": 1, "file": 1, "identifier": 14, "literal": 2, "local": 3, "method": 2, "method_return": 2, "other": 20, "param": 3, "return": 1, "type": 1}
+edges: {"argument": 2, "ast": 47, "call": 1, "cdg": 7, "cfg": 12, "contains": 8, "param_in": 2, "reaching": 6, "ref": 10, "scope": 2, "type_of": 3}
+call f -> f::add

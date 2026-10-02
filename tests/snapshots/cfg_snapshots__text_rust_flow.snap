@@ -1,0 +1,89 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn read
+  entry []
+  exit []
+  b2 [4:let text = fs::read_to_string(path)?;]
+  b3 [5:let n = if text.is_empty() { 0 } else { text.len() }; | 5:text.is_empty()]
+  b4 [6:Ok(n) | 6:<return>]
+  b5 [5:0]
+  b6 [5:text.len()]
+  0 -normal-> 2
+  2 -return-> 1
+  2 -normal-> 3
+  3 -true-> 5
+  3 -false-> 6
+  4 -normal-> 1
+  5 -normal-> 4
+  6 -normal-> 4
+fn run
+  entry []
+  exit []
+  b2 [10:let mut total = 0;]
+  b3 [11:'outer: for x in xs {]
+  b4 [22:let k = loop {]
+  b5 []
+  b6 [12:total < 100]
+  b7 []
+  b8 [13:*x < 0]
+  b9 [16:total += x | 17:total > 50]
+  b10 []
+  b11 []
+  b12 []
+  b13 [22:loop]
+  b14 [28:match k {]
+  b15 [23:total += 1 | 24:total > 5]
+  b16 []
+  b17 []
+  b18 [37:total | 37:<return>]
+  b19 [29:case 0 | 29:return 0]
+  b20 [30:case 1 | 2 | 30:total += 1]
+  b21 [28:default | 32:flag]
+  b22 []
+  b23 [33:panic!("boom")]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 13
+  5 -normal-> 6
+  6 -false-> 7
+  6 -true-> 8
+  7 -back-> 3
+  8 -false-> 9
+  8 -true-> 10
+  9 -false-> 11
+  9 -true-> 12
+  10 -continue-> 3
+  11 -back-> 6
+  12 -break-> 4
+  13 -normal-> 15
+  14 -true-> 19
+  14 -true-> 20
+  14 -true-> 21
+  15 -false-> 16
+  15 -true-> 17
+  16 -back-> 13
+  17 -break-> 14
+  18 -normal-> 1
+  19 -return-> 1
+  20 -normal-> 18
+  21 -false-> 22
+  21 -true-> 23
+  22 -normal-> 18
+  23 -exception-> 1
+fn S::method
+  entry []
+  exit []
+  b2 [43:a > 0]
+  b3 []
+  b4 [43:a]
+  b5 [43:-a]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -false-> 5
+  3 -normal-> 1
+  4 -normal-> 3
+  5 -normal-> 3

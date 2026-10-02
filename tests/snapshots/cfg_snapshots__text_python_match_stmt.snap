@@ -1,0 +1,23 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn m
+  entry []
+  exit []
+  b2 [2:match cmd:]
+  b3 !dead []
+  b4 [3:case "go" | 4:return 1]
+  b5 [5:case "stop" | 5:cmd]
+  b6 [2:default | 8:return 0]
+  b7 [6:return 2]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  2 -true-> 6
+  3 -normal-> 1
+  4 -return-> 1
+  5 -false-> 6
+  5 -true-> 7
+  6 -return-> 1
+  7 -return-> 1

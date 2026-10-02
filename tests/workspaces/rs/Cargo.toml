@@ -1,0 +1,10 @@
+[package]
+name = "custom"
+version = "0.1.0"
+
+[lib]
+path = "src/custom_lib.rs"
+
+[[bin]]
+name = "tool"
+path = "tools/tool_main.rs"

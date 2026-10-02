@@ -1,0 +1,49 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn f
+  entry []
+  exit []
+  b2 []
+  b3 !dead []
+  b4 [2:for x in xs]
+  b5 [2:x > 0]
+  b6 [2:ys = [x * 2 for x in xs if x > 0 if x < 10] | 3:b]
+  b7 [2:x < 10]
+  b8 [2:x * 2]
+  b9 [3:a]
+  b10 [3:None]
+  b11 [3:z = a if b else None | 4:a]
+  b12 [4:b()]
+  b13 [4:ok = a and b() | 5:match a:]
+  b14 !dead [12:return ys, z, ok]
+  b15 [6:case 1 | 6:b]
+  b16 [8:case 2 | 3 | 9:return 2]
+  b17 [5:default | 11:return 0]
+  b18 [7:return 1]
+  0 -normal-> 2
+  2 -normal-> 4
+  4 -true-> 5
+  4 -false-> 6
+  5 -false-> 4
+  5 -true-> 7
+  6 -true-> 9
+  6 -false-> 10
+  7 -false-> 4
+  7 -true-> 8
+  8 -back-> 4
+  9 -normal-> 11
+  10 -normal-> 11
+  11 -true-> 12
+  11 -false-> 13
+  12 -normal-> 13
+  13 -true-> 15
+  13 -true-> 16
+  13 -true-> 17
+  14 -return-> 1
+  15 -false-> 16
+  15 -true-> 18
+  16 -return-> 1
+  17 -return-> 1
+  18 -return-> 1

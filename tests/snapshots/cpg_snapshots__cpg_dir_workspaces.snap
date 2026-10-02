@@ -1,0 +1,10 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 6, "call": 5, "field_access": 4, "file": 21, "identifier": 42, "literal": 17, "local": 6, "method": 10, "method_return": 16, "other": 123}
+edges: {"ast": 207, "call": 4, "cdg": 14, "cfg": 30, "contains": 32, "imports": 15, "receiver": 4, "ref": 6, "scope": 10}
+call main -> Do
+call main -> S
+call main -> X
+call main -> area

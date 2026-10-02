@@ -1,0 +1,10 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 28, "binary_op": 1, "call": 37, "field": 1, "field_access": 22, "file": 2, "identifier": 126, "literal": 42, "local": 21, "method": 15, "method_return": 15, "other": 264, "param": 4, "type_decl": 2}
+edges: {"argument": 19, "ast": 541, "call": 4, "cdg": 42, "cfg": 57, "contains": 52, "param_in": 4, "param_out": 4, "reaching": 34, "receiver": 14, "ref": 51, "scope": 17}
+call instances_apart -> Req.__init__
+call instances_apart -> Req.__init__
+call instances_same -> Req.__init__
+call instances_same -> Req.__init__

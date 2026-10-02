@@ -1,0 +1,28 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn s
+  entry []
+  exit []
+  b2 [4:select {]
+  b3 [11:switch t := v.(type) {]
+  b4 [5:case x := <-ch | 6:return x]
+  b5 [7:case ch <- 1 | 8:return 2]
+  b6 [4:default]
+  b7 [17:return -1]
+  b8 [12:case int | 13:return t]
+  b9 [14:case string, bool | 15:return 0]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  2 -true-> 6
+  3 -false-> 7
+  3 -true-> 8
+  3 -true-> 9
+  4 -return-> 1
+  5 -return-> 1
+  6 -normal-> 3
+  7 -return-> 1
+  8 -return-> 1
+  9 -return-> 1

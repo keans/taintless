@@ -1,0 +1,21 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn <module>
+  entry []
+  exit []
+  b2 [1:const View = (props: { on: boolean }) => {]
+  0 -normal-> 2
+  2 -normal-> 1
+fn View
+  entry []
+  exit []
+  b2 [2:props.on]
+  b3 [5:return null;]
+  b4 [3:return <div>on</div>;]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1

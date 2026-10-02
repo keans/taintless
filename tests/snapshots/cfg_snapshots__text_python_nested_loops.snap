@@ -1,0 +1,43 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn grid
+  entry []
+  exit []
+  b2 []
+  b3 [2:for i in range(n):]
+  b4 []
+  b5 []
+  b6 [3:for j in range(n):]
+  b7 []
+  b8 [4:i == j]
+  b9 [9:print("no break", i)]
+  b10 [6:i + j > n]
+  b11 []
+  b12 []
+  b13 []
+  b14 [10:n]
+  b15 [12:return n]
+  b16 [11:n -= 1]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 14
+  5 -normal-> 6
+  6 -true-> 8
+  6 -false-> 9
+  7 -back-> 3
+  8 -false-> 10
+  8 -true-> 11
+  9 -normal-> 7
+  10 -false-> 12
+  10 -true-> 13
+  11 -continue-> 6
+  12 -back-> 6
+  13 -break-> 7
+  14 -false-> 15
+  14 -true-> 16
+  15 -return-> 1
+  16 -back-> 14

@@ -1,0 +1,43 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn ns::W::run
+  entry []
+  exit []
+  b2 [8:int total = 0;]
+  b3 [9:for (auto x : xs) {]
+  b4 [14:check(total);]
+  b5 [10:x < 0]
+  b6 [11:total += x;]
+  b7 []
+  b8 [20:return total;]
+  b9 [15:catch (const std::exception& e) { | 16:throw;]
+  b10 [17:catch (...) { | 18:return -1;]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 8
+  4 -exception-> 9
+  4 -exception-> 10
+  5 -false-> 6
+  5 -true-> 7
+  6 -back-> 3
+  7 -continue-> 3
+  8 -return-> 1
+  9 -exception-> 1
+  10 -return-> 1
+fn W_free
+  entry []
+  exit []
+  b2 [25:a]
+  b3 [25:1]
+  b4 [25:2]
+  b5 [25:return a ? 1 : 2;]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 5
+  4 -normal-> 5
+  5 -return-> 1

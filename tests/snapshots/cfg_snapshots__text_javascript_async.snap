@@ -1,0 +1,37 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn j
+  entry []
+  exit []
+  b2 []
+  b3 [2:for await (const x of xs) { if (x) break; }]
+  b4 [3:await go();]
+  b5 [2:x]
+  b6 []
+  b7 []
+  b8 [3:done(); | 4:xs]
+  b9 [3:done();]
+  b10 [4:xs?.length]
+  b11 [4:xs?.length]
+  b12 [4:0]
+  b13 [4:return xs?.length ?? 0;]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 8
+  4 -exception-> 9
+  5 -false-> 6
+  5 -true-> 7
+  6 -back-> 3
+  7 -break-> 4
+  8 -true-> 10
+  8 -false-> 11
+  9 -exception-> 1
+  10 -normal-> 11
+  11 -false-> 12
+  11 -true-> 13
+  12 -normal-> 13
+  13 -return-> 1

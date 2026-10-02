@@ -1,0 +1,34 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn Sw.a
+  entry []
+  exit []
+  b2 [3:switch (k) {]
+  b3 [8:return 0;]
+  b4 [4:case 1 | 4:return 1;]
+  b5 [5:case 2 | 5:System.out.println("two");]
+  b6 [3:default | 6:throw new RuntimeException();]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  2 -true-> 6
+  3 -return-> 1
+  4 -return-> 1
+  5 -normal-> 3
+  6 -exception-> 1
+fn Sw.b
+  entry []
+  exit []
+  b2 [11:x]
+  b3 [12:return false;]
+  b4 [11:return true;]
+  b5 [11:y]
+  0 -normal-> 2
+  2 -false-> 4
+  2 -true-> 5
+  3 -return-> 1
+  4 -return-> 1
+  5 -false-> 3
+  5 -true-> 4

@@ -1,0 +1,2 @@
+disable = ["command-injection"]
+exclude = ["deep/skip.py"]

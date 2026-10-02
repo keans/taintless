@@ -1,0 +1,26 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 8, "call": 24, "field_access": 12, "file": 4, "identifier": 66, "literal": 16, "local": 4, "method": 12, "method_return": 12, "other": 194, "param": 8, "type": 12, "type_decl": 10}
+edges: {"argument": 20, "ast": 350, "call": 20, "cdg": 20, "cfg": 32, "contains": 40, "param_in": 16, "reaching": 28, "receiver": 20, "ref": 24, "scope": 22, "type_of": 16}
+call A.Run -> A.Run
+call A.Run -> A.Run
+call A.Run -> B.Run
+call A.Run -> B.Run
+call S.f -> A.run
+call S.f -> A.run
+call S.f -> A.run
+call S.f -> A.run
+call S.f -> B.run
+call S.f -> B.run
+call S.f -> B.run
+call S.f -> B.run
+call f -> A.Run
+call f -> A.Run
+call f -> A.Run
+call f -> A.Run
+call f -> B.Run
+call f -> B.Run
+call f -> B.Run
+call f -> B.Run

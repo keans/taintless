@@ -1,0 +1,15 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn f
+  entry []
+  exit []
+  b2 [4:defer a() | 5:x > 0]
+  b3 [9:defer c() | 10:return 2 | 9:deferred c() | 4:deferred a()]
+  b4 [6:defer b() | 7:return 1 | 6:deferred b() | 4:deferred a()]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 4
+  3 -return-> 1
+  4 -return-> 1

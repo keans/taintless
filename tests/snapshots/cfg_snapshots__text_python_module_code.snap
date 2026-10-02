@@ -1,0 +1,27 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn <module>
+  entry []
+  exit []
+  b2 [1:import os | 6:__name__ == "__main__"]
+  b3 []
+  b4 [7:main()]
+  b5 [6:os.environ.get("X")]
+  b6 [6:DEBUG]
+  0 -normal-> 2
+  2 -false-> 3
+  2 -true-> 5
+  3 -normal-> 1
+  4 -normal-> 3
+  5 -true-> 4
+  5 -false-> 6
+  6 -true-> 3
+  6 -false-> 4
+fn main
+  entry []
+  exit []
+  b2 [4:pass]
+  0 -normal-> 2
+  2 -normal-> 1

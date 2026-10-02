@@ -1,0 +1,30 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn f
+  entry []
+  exit []
+  b2 [2:let add = |a: i32, b: i32| { | 5:let Some(v) = x else {]
+  b3 [8:add(v, 1) | 8:<return>]
+  b4 []
+  b5 [6:return -1]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -false-> 5
+  3 -normal-> 1
+  4 -normal-> 3
+  5 -return-> 1
+fn f::add
+  entry []
+  exit []
+  b2 [3:a > b]
+  b3 []
+  b4 [3:a]
+  b5 [3:b]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -false-> 5
+  3 -normal-> 1
+  4 -normal-> 3
+  5 -normal-> 3

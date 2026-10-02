@@ -1,0 +1,5 @@
+disable = ["weak-crypto", "unreachable-code"]
+exclude = ["tests/vuln/app.js", "**/*.go"]
+
+[severity]
+command-injection = "medium"

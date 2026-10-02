@@ -1,0 +1,46 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 50, "binary_op": 2, "call": 59, "control": 2, "field": 7, "field_access": 46, "file": 7, "identifier": 271, "literal": 20, "local": 30, "method": 46, "method_return": 48, "other": 329, "param": 45, "return": 7, "type_decl": 5}
+edges: {"argument": 53, "ast": 882, "call": 40, "capture": 2, "cdg": 100, "cfg": 155, "contains": 131, "param_in": 31, "param_out": 14, "reaching": 143, "receiver": 19, "ref": 139, "return_out": 6, "scope": 51}
+call ? -> run
+call Bus.__init__ -> run
+call Bus.fire -> run
+call Bus.fire -> run
+call Bus.fire -> sink
+call Bus.fire -> sink
+call Bus.fire_all -> run
+call alias -> Job.__init__
+call apply -> shout
+call apply -> shout
+call callback -> apply
+call callback -> shout
+call capture -> go
+call dispatch -> run
+call local_table -> run
+call main -> Job.__init__
+call main -> Job.run
+call method_on_var -> Job.__init__
+call method_on_var -> Job.run
+call named -> sink
+call passed -> run
+call queue -> run
+call reassign -> noop
+call reassign -> sink
+call reassigned -> log
+call reassigned -> run
+call rebound_away -> log
+call rebound_away -> run
+call registry -> run
+call run -> run.f
+call stored -> cb
+call through_call -> Req.__init__
+call through_call -> fill
+call through_field -> Holder.__init__
+call through_field -> Req.__init__
+call through_identity -> Req.__init__
+call through_identity -> through_identity_helper
+call through_list -> Req.__init__
+call unrelated -> Req.__init__
+call unrelated -> Req.__init__

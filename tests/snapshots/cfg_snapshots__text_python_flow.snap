@@ -1,0 +1,36 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn f
+  entry []
+  exit []
+  b2 [2:total = 0]
+  b3 [3:for x in xs:]
+  b4 [11:eval(str(total))]
+  b5 [4:x < 0]
+  b6 []
+  b7 []
+  b8 [6:x > 100]
+  b9 []
+  b10 []
+  b11 [9:total += x]
+  b12 [15:print("done") | 16:return total]
+  b13 [12:except ValueError: | 13:return -1 | 15:print("done")]
+  0 -normal-> 2
+  2 -normal-> 3
+  3 -false-> 4
+  3 -true-> 5
+  4 -normal-> 12
+  4 -exception-> 13
+  5 -true-> 7
+  5 -false-> 8
+  6 -back-> 3
+  7 -continue-> 3
+  8 -true-> 10
+  8 -false-> 11
+  9 -normal-> 6
+  10 -break-> 4
+  11 -normal-> 9
+  12 -return-> 1
+  13 -return-> 1

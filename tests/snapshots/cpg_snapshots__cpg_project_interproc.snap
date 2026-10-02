@@ -1,0 +1,20 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 7, "binary_op": 3, "call": 32, "control": 1, "field_access": 14, "file": 5, "identifier": 92, "literal": 13, "local": 6, "method": 12, "method_return": 14, "other": 129, "param": 11, "return": 6, "type": 1}
+edges: {"argument": 28, "ast": 320, "call": 14, "cdg": 30, "cfg": 45, "contains": 33, "imports": 2, "param_in": 15, "reaching": 39, "receiver": 10, "ref": 28, "return_out": 8, "scope": 12, "type_of": 1}
+call handler -> sh
+call handler -> sh
+call main -> build
+call main -> constant
+call main -> nested
+call main -> read_input
+call main -> recur
+call main -> run
+call main -> run
+call main -> run_cmd
+call main -> run_cmd
+call main -> safe
+call nested -> run_cmd
+call recur -> recur

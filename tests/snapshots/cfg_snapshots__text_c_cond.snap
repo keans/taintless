@@ -1,0 +1,28 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn c
+  entry []
+  exit []
+  b2 [2:a]
+  b3 []
+  b4 [2:return 1;]
+  b5 [2:b]
+  b6 [3:a]
+  b7 [4:return 0;]
+  b8 [3:a--;]
+  b9 [3:b]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 5
+  3 -normal-> 6
+  4 -return-> 1
+  5 -false-> 3
+  5 -true-> 4
+  6 -true-> 8
+  6 -false-> 9
+  7 -return-> 1
+  8 -back-> 6
+  9 -false-> 7
+  9 -true-> 8

@@ -1,0 +1,564 @@
+//! Built-in rule tables: what is a source, a sanitizer or a dangerous call,
+//! per language family. Patterns are matched against normalized callees
+//! (`os.system`, `Runtime.getRuntime.exec`, `Command.new`, ...):
+//!
+//! * `"eval"`        exactly the bare name,
+//! * `"os.system"`   that dotted name, optionally behind more qualifiers,
+//! * `"*.execute"`   any method named `execute`.
+
+use super::Severity;
+use crate::lang::Language;
+
+#[derive(Clone, Copy)]
+pub enum ArgSel {
+    Any,
+    /// Only the n-th argument (0-based): the query of `execute(query, params)`.
+    At(usize),
+}
+
+#[derive(Clone, Copy)]
+pub enum Mode {
+    /// Always reported (escalated when an argument is tainted).
+    Always,
+    /// Reported only when untrusted data reaches the selected argument(s).
+    Tainted(ArgSel),
+}
+
+#[derive(Clone, Copy)]
+pub struct CallRule {
+    pub pattern: &'static str,
+    pub id: &'static str,
+    pub cwe: &'static str,
+    pub severity: Severity,
+    pub message: &'static str,
+    pub mode: Mode,
+    /// Callees that look like this rule's pattern but are something else
+    /// (`syscall.Exec` is not a database `Exec`).
+    pub except: &'static [&'static str],
+}
+
+impl CallRule {
+    const fn except(self, except: &'static [&'static str]) -> Self {
+        Self { except, ..self }
+    }
+    const fn at(self, i: usize) -> Self {
+        Self { mode: Mode::Tainted(ArgSel::At(i)), ..self }
+    }
+}
+
+use Severity::{High, Low, Medium};
+
+const fn tainted(pattern: &'static str, id: &'static str, cwe: &'static str, severity: Severity, message: &'static str) -> CallRule {
+    CallRule { pattern, id, cwe, severity, message, mode: Mode::Tainted(ArgSel::Any), except: &[] }
+}
+const fn always(pattern: &'static str, id: &'static str, cwe: &'static str, severity: Severity, message: &'static str) -> CallRule {
+    CallRule { pattern, id, cwe, severity, message, mode: Mode::Always, except: &[] }
+}
+
+const fn cmd(p: &'static str) -> CallRule {
+    tainted(p, "command-injection", "CWE-78", High, "OS command built from untrusted input")
+}
+const fn code(p: &'static str) -> CallRule {
+    tainted(p, "code-injection", "CWE-95", High, "dynamic code built from untrusted input")
+}
+const fn eval(p: &'static str) -> CallRule {
+    always(p, "code-injection", "CWE-95", High, "dynamic code evaluation")
+}
+const fn sql(p: &'static str) -> CallRule {
+    tainted(p, "sql-injection", "CWE-89", High, "SQL query built from untrusted input").at(0)
+}
+const fn path(p: &'static str) -> CallRule {
+    tainted(p, "path-traversal", "CWE-22", Medium, "file path built from untrusted input").at(0)
+}
+const fn ssrf(p: &'static str) -> CallRule {
+    tainted(p, "ssrf", "CWE-918", Medium, "request URL built from untrusted input").at(0)
+}
+const fn redirect(p: &'static str) -> CallRule {
+    tainted(p, "open-redirect", "CWE-601", Medium, "redirect target from untrusted input")
+}
+const fn xss(p: &'static str) -> CallRule {
+    tainted(p, "xss", "CWE-79", Medium, "untrusted data written into a page")
+}
+const fn deser(p: &'static str) -> CallRule {
+    always(p, "insecure-deserialization", "CWE-502", High, "deserialization of untrusted data can run code")
+}
+const fn weak_hash(p: &'static str) -> CallRule {
+    always(p, "weak-crypto", "CWE-327", Low, "weak hash algorithm")
+}
+const fn unsafe_fn(p: &'static str, msg: &'static str) -> CallRule {
+    always(p, "unsafe-function", "CWE-676", Medium, msg)
+}
+const fn format_string(p: &'static str, arg: usize) -> CallRule {
+    tainted(p, "format-string", "CWE-134", High, "format string controlled by untrusted input").at(arg)
+}
+
+/// Console output is never a page.
+const STDOUT: &[&str] = &["System.out.println", "System.out.print", "System.err.println", "System.err.print"];
+
+/// Methods that store their arguments in the receiver (`list.append(x)`): a
+/// tainted argument taints the receiver.
+pub const MUTATORS: &[&str] = &[
+    "append", "extend", "add", "insert", "push", "push_back", "push_front", "push_str", "put", "putAll",
+    "addAll", "update", "setdefault", "write", "writelines", "appendleft", "offer", "unshift", "set",
+    "concat", "emplace_back", "WriteString", "Write",
+];
+
+/// Environment variables and system properties are set by whoever runs the
+/// program, so they do not make a path, URL, redirect or page "untrusted"
+/// (they still matter for commands and memory errors).
+pub fn ignores_env_sources(rule_id: &str) -> bool {
+    matches!(rule_id, "path-traversal" | "ssrf" | "open-redirect" | "xss")
+}
+
+/// Whether a source description names an environment-like origin.
+pub fn is_env_source(desc: &str) -> bool {
+    let d = desc.to_ascii_lowercase();
+    ["getenv", "environ", "env.var", "lookupenv", "process.env", "getproperty"].iter().any(|p| d.contains(p))
+}
+
+/// A function whose parameters carry untrusted data (a request handler, ...).
+#[derive(Clone, Copy)]
+pub struct Entry {
+    /// Function name; `*` matches anything (`handle_*`).
+    pub pattern: &'static str,
+    /// Only these parameters; empty = all of them.
+    pub params: &'static [&'static str],
+}
+
+/// `*` wildcard match of the whole text.
+pub fn wild(pattern: &str, text: &str) -> bool {
+    fn go(p: &[u8], t: &[u8]) -> bool {
+        match p.split_first() {
+            None => t.is_empty(),
+            Some((b'*', rest)) => (0..=t.len()).any(|i| go(rest, &t[i..])),
+            Some((c, rest)) => t.first() == Some(c) && go(rest, &t[1..]),
+        }
+    }
+    go(pattern.as_bytes(), text.as_bytes())
+}
+
+pub struct RuleSet {
+    pub entries: &'static [Entry],
+    pub rules: &'static [CallRule],
+    /// Calls whose result is untrusted.
+    pub source_calls: &'static [&'static str],
+    /// Variables / member paths that hold untrusted data.
+    pub source_paths: &'static [&'static str],
+    /// Calls whose result is safe regardless of their arguments.
+    pub sanitizers: &'static [&'static str],
+    /// Custom explanations for configured sources: `(is a call pattern, pattern, message)`.
+    pub source_notes: &'static [(bool, &'static str, &'static str)],
+}
+
+/// `pattern` against a normalized callee; see the module docs.
+pub fn matches(pattern: &str, callee: &str) -> bool {
+    if let Some(m) = pattern.strip_prefix("*.") {
+        return callee.rsplit_once('.').is_some_and(|(_, last)| last == m);
+    }
+    if !pattern.contains('.') {
+        return callee == pattern;
+    }
+    callee == pattern
+        || (callee.len() > pattern.len()
+            && callee.ends_with(pattern)
+            && callee.as_bytes()[callee.len() - pattern.len() - 1] == b'.')
+}
+
+/// `path` without element keys: `request.args['q'].x` is `request.args.x`.
+fn without_keys(path: &str) -> std::borrow::Cow<'_, str> {
+    if !path.contains('[') {
+        return path.into();
+    }
+    let mut out = String::with_capacity(path.len());
+    let mut depth = 0;
+    for c in path.chars() {
+        match c {
+            '[' => depth += 1,
+            ']' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.into()
+}
+
+fn path_matches(pattern: &str, path: &str) -> bool {
+    let path = &*without_keys(path);
+    path == pattern
+        || path.starts_with(&format!("{pattern}."))
+        || path.ends_with(&format!(".{pattern}"))
+        || path.contains(&format!(".{pattern}."))
+}
+
+impl RuleSet {
+    pub fn is_source_call(&self, callee: &str) -> bool {
+        self.source_calls.iter().any(|p| matches(p, callee))
+    }
+    pub fn is_source_path(&self, path: &str) -> bool {
+        self.source_paths.iter().any(|p| path_matches(p, path))
+    }
+    /// The configured explanation of why this call's result is untrusted.
+    pub fn source_call_note(&self, callee: &str) -> Option<&'static str> {
+        self.source_notes.iter().find(|(call, p, _)| *call && matches(p, callee)).map(|n| n.2)
+    }
+    pub fn source_path_note(&self, path: &str) -> Option<&'static str> {
+        self.source_notes.iter().find(|(call, p, _)| !*call && path_matches(p, path)).map(|n| n.2)
+    }
+    pub fn is_sanitizer(&self, callee: &str) -> bool {
+        self.sanitizers.iter().any(|p| matches(p, callee))
+    }
+}
+
+fn builtin(lang: Language) -> &'static RuleSet {
+    match lang {
+        Language::Python => &PYTHON,
+        Language::JavaScript | Language::TypeScript | Language::Tsx => &JAVASCRIPT,
+        Language::Java => &JAVA,
+        Language::Go => &GO,
+        Language::Rust => &RUST,
+        Language::C | Language::Cpp => &C_FAMILY,
+    }
+}
+
+/// Every built-in rule of every language (prototypes for configured sinks).
+pub fn all_rules() -> impl Iterator<Item = &'static CallRule> {
+    [&PYTHON, &JAVASCRIPT, &JAVA, &GO, &RUST, &C_FAMILY].into_iter().flat_map(|r| r.rules.iter())
+}
+
+/// The rules for `lang`: the built-in ones plus those from the installed configuration.
+pub fn rules_for(lang: Language) -> &'static RuleSet {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MERGED: OnceLock<Mutex<HashMap<u8, &'static RuleSet>>> = OnceLock::new();
+    let base = builtin(lang);
+    let Some(active) = super::config::installed() else { return base };
+    let mut cache = MERGED.get_or_init(Default::default).lock().expect("rules cache");
+    cache.entry(lang.family()).or_insert_with(|| super::config::extend(base, lang.family(), &active.config))
+}
+
+/// Rule id -> (title, CWE) for reports.
+pub const RULE_INFO: &[(&str, &str, &str)] = &[
+    ("command-injection", "OS command injection", "CWE-78"),
+    ("code-injection", "Code injection / dynamic evaluation", "CWE-95"),
+    ("sql-injection", "SQL injection", "CWE-89"),
+    ("path-traversal", "Path traversal", "CWE-22"),
+    ("ssrf", "Server-side request forgery", "CWE-918"),
+    ("open-redirect", "Open redirect", "CWE-601"),
+    ("xss", "Cross-site scripting", "CWE-79"),
+    ("insecure-deserialization", "Insecure deserialization", "CWE-502"),
+    ("weak-crypto", "Weak cryptographic algorithm", "CWE-327"),
+    ("unsafe-function", "Use of an unsafe function", "CWE-676"),
+    ("format-string", "Format string vulnerability", "CWE-134"),
+    ("insecure-temp-file", "Insecure temporary file", "CWE-377"),
+    ("unreachable-code", "Unreachable code", "CWE-561"),
+];
+
+static PYTHON: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        eval("eval"),
+        eval("exec"),
+        code("compile").at(0),
+        cmd("os.system"),
+        cmd("os.popen"),
+        cmd("os.execl"),
+        cmd("os.execv"),
+        cmd("os.execvp"),
+        cmd("os.spawnl"),
+        cmd("subprocess.run"),
+        cmd("subprocess.call"),
+        cmd("subprocess.check_call"),
+        cmd("subprocess.check_output"),
+        cmd("subprocess.Popen"),
+        cmd("subprocess.getoutput"),
+        cmd("subprocess.getstatusoutput"),
+        deser("pickle.loads"),
+        deser("pickle.load"),
+        deser("cPickle.loads"),
+        deser("marshal.loads"),
+        deser("yaml.load"),
+        deser("yaml.unsafe_load"),
+        deser("shelve.open"),
+        sql("*.execute"),
+        sql("*.executemany"),
+        sql("*.executescript"),
+        sql("*.raw"),
+        path("open"),
+        path("os.remove"),
+        path("os.unlink"),
+        path("os.rmdir"),
+        path("os.makedirs"),
+        path("os.listdir"),
+        path("shutil.rmtree"),
+        path("shutil.copy"),
+        path("send_file"),
+        path("send_from_directory"),
+        ssrf("requests.get"),
+        ssrf("requests.post"),
+        ssrf("requests.put"),
+        ssrf("requests.delete"),
+        ssrf("requests.request"),
+        ssrf("urllib.request.urlopen"),
+        ssrf("urlopen"),
+        redirect("redirect"),
+        xss("render_template_string"),
+        xss("Markup"),
+        xss("HttpResponse"),
+        weak_hash("hashlib.md5"),
+        weak_hash("hashlib.sha1"),
+        always("tempfile.mktemp", "insecure-temp-file", "CWE-377", Low, "predictable temporary file name"),
+    ],
+    source_calls: &[
+        "input", "raw_input", "os.getenv", "os.environ.get", "sys.stdin.read", "sys.stdin.readline",
+        "request.args.get", "request.form.get", "request.values.get", "request.get_json",
+        "request.GET.get", "request.POST.get", "*.recv", "*.recvfrom", "*.getlist",
+    ],
+    source_paths: &[
+        "sys.argv", "os.environ", "request.args", "request.form", "request.values", "request.json",
+        "request.data", "request.cookies", "request.headers", "request.GET", "request.POST", "request.body",
+    ],
+    sanitizers: &[
+        "int", "float", "bool", "len", "shlex.quote", "html.escape", "markupsafe.escape", "escape",
+        "re.escape", "os.path.basename", "secure_filename", "urllib.parse.quote", "quote", "bleach.clean",
+    ],
+};
+
+static JAVASCRIPT: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        eval("eval"),
+        eval("Function"),
+        code("setTimeout").at(0),
+        code("setInterval").at(0),
+        code("vm.runInNewContext"),
+        code("vm.runInThisContext"),
+        code("vm.runInContext"),
+        cmd("child_process.exec"),
+        cmd("child_process.execSync"),
+        cmd("child_process.spawn"),
+        cmd("child_process.spawnSync"),
+        cmd("child_process.execFile"),
+        cmd("exec"),
+        cmd("execSync"),
+        cmd("spawn"),
+        cmd("spawnSync"),
+        xss("document.write"),
+        xss("document.writeln"),
+        xss("*.insertAdjacentHTML"),
+        xss("res.send"),
+        xss("res.write"),
+        xss("res.end"),
+        xss("response.send"),
+        xss("response.write"),
+        sql("*.query"),
+        sql("*.execute"),
+        sql("*.raw"),
+        path("fs.readFile"),
+        path("fs.readFileSync"),
+        path("fs.writeFile"),
+        path("fs.writeFileSync"),
+        path("fs.createReadStream"),
+        path("fs.unlink"),
+        path("fs.unlinkSync"),
+        path("fs.rm"),
+        path("fs.rmSync"),
+        path("*.sendFile"),
+        path("*.download"),
+        path("require"),
+        ssrf("fetch"),
+        ssrf("axios"),
+        ssrf("axios.get"),
+        ssrf("axios.post"),
+        ssrf("http.get"),
+        ssrf("https.get"),
+        ssrf("request"),
+        redirect("*.redirect"),
+    ],
+    source_calls: &[
+        "prompt", "readline.question", "localStorage.getItem", "sessionStorage.getItem",
+        "URLSearchParams.get", "*.getParameter",
+    ],
+    source_paths: &[
+        "process.argv", "process.env", "req.body", "req.query", "req.params", "req.headers",
+        "req.cookies", "request.body", "request.query", "request.params", "location.search",
+        "location.hash", "location.href", "document.cookie", "document.referrer", "window.name",
+    ],
+    sanitizers: &[
+        "parseInt", "parseFloat", "Number", "Boolean", "encodeURIComponent", "encodeURI", "escape",
+        "path.basename", "validator.escape", "DOMPurify.sanitize", "sanitizeHtml", "escapeHtml",
+        "_.escape", "shellEscape",
+    ],
+};
+
+static JAVA: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[Entry { pattern: "main", params: &["args"] }],
+    rules: &[
+        cmd("Runtime.getRuntime.exec"),
+        cmd("*.exec"),
+        cmd("ProcessBuilder"),
+        sql("*.executeQuery"),
+        sql("*.executeUpdate"),
+        sql("*.execute"),
+        sql("*.prepareStatement"),
+        sql("*.createQuery"),
+        sql("*.createNativeQuery"),
+        deser("*.readObject"),
+        deser("XMLDecoder"),
+        path("File"),
+        path("FileInputStream"),
+        path("FileOutputStream"),
+        path("FileReader"),
+        path("FileWriter"),
+        path("Paths.get"),
+        path("Files.readAllBytes"),
+        path("Files.readString"),
+        path("Files.newInputStream"),
+        path("Files.write"),
+        path("Files.delete"),
+        code("*.eval"),
+        tainted("Class.forName", "code-injection", "CWE-470", Medium, "class loaded by untrusted name").at(0),
+        ssrf("URL"),
+        redirect("*.sendRedirect"),
+        xss("getWriter.println"),
+        xss("getWriter.print"),
+        xss("getWriter.write"),
+        xss("out.println").except(STDOUT),
+        xss("out.print").except(STDOUT),
+    ],
+    source_calls: &[
+        "System.getenv", "System.getProperty", "*.getParameter", "*.getParameterValues", "*.getHeader",
+        "*.getQueryString", "*.getCookies", "*.readLine", "*.nextLine", "*.getInputStream",
+    ],
+    source_paths: &[],
+    sanitizers: &[
+        "Integer.parseInt", "Long.parseLong", "Integer.valueOf", "Double.parseDouble",
+        "Boolean.parseBoolean", "URLEncoder.encode", "*.escapeHtml4", "*.escapeHtml", "*.encodeForHTML",
+        "FilenameUtils.getName", "Jsoup.clean", "HtmlUtils.htmlEscape",
+    ],
+};
+
+static GO: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        cmd("exec.Command"),
+        cmd("exec.CommandContext"),
+        cmd("syscall.Exec").at(0),
+        cmd("os.StartProcess").at(0),
+        sql("*.Query"),
+        sql("*.QueryRow"),
+        sql("*.QueryContext"),
+        sql("*.Exec").except(&["syscall.Exec", "unix.Exec"]),
+        sql("*.ExecContext"),
+        sql("*.Prepare"),
+        path("os.Open"),
+        path("os.OpenFile"),
+        path("os.ReadFile"),
+        path("os.WriteFile"),
+        path("os.Remove"),
+        path("os.RemoveAll"),
+        path("os.Create"),
+        path("os.MkdirAll"),
+        path("ioutil.ReadFile"),
+        path("ioutil.WriteFile"),
+        path("filepath.Join"),
+        ssrf("http.Get"),
+        ssrf("http.Post"),
+        ssrf("http.NewRequest").at(1),
+        redirect("http.Redirect").at(2),
+        xss("template.HTML"),
+        weak_hash("md5.New"),
+        weak_hash("md5.Sum"),
+        weak_hash("sha1.New"),
+        weak_hash("sha1.Sum"),
+    ],
+    source_calls: &[
+        "os.Getenv", "os.LookupEnv", "*.FormValue", "*.PostFormValue", "URL.Query.Get", "Header.Get",
+        "*.Cookie", "*.ReadString", "*.ReadLine", "flag.Arg",
+    ],
+    source_paths: &["os.Args", "URL.Path", "URL.RawQuery", "Form", "PostForm"],
+    sanitizers: &[
+        "strconv.Atoi", "strconv.ParseInt", "strconv.ParseUint", "strconv.ParseFloat", "strconv.ParseBool",
+        "strconv.Quote", "filepath.Base", "path.Base", "html.EscapeString", "url.QueryEscape",
+        "template.HTMLEscapeString", "shellescape.Quote",
+    ],
+};
+
+static RUST: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        cmd("Command.new"),
+        cmd("*.arg"),
+        cmd("*.args"),
+        sql("*.execute"),
+        sql("*.query"),
+        sql("*.query_row"),
+        sql("*.prepare"),
+        sql("sqlx.query"),
+        path("File.open"),
+        path("File.create"),
+        path("fs.read"),
+        path("fs.read_to_string"),
+        path("fs.write"),
+        path("fs.remove_file"),
+        path("fs.remove_dir_all"),
+        path("fs.create_dir_all"),
+        ssrf("reqwest.get"),
+        unsafe_fn("mem.transmute", "transmute bypasses the type system"),
+        unsafe_fn("*.get_unchecked", "unchecked indexing can read out of bounds"),
+        unsafe_fn("from_utf8_unchecked", "skips UTF-8 validation"),
+        unsafe_fn("*.unwrap_unchecked", "undefined behavior if the value is absent"),
+    ],
+    source_calls: &[
+        "env.args", "env.var", "env.args_os", "*.read_line", "*.read_to_string", "*.read_to_end",
+    ],
+    source_paths: &[],
+    sanitizers: &["*.parse", "*.canonicalize", "html_escape.encode_text", "shell_escape.escape"],
+};
+
+static C_FAMILY: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        always("gets", "unsafe-function", "CWE-242", High, "gets() cannot limit input size"),
+        always("strcpy", "unsafe-function", "CWE-120", Medium, "unbounded copy (use strncpy/strlcpy)"),
+        always("strcat", "unsafe-function", "CWE-120", Medium, "unbounded append (use strncat/strlcat)"),
+        always("stpcpy", "unsafe-function", "CWE-120", Medium, "unbounded copy"),
+        always("sprintf", "unsafe-function", "CWE-120", Medium, "unbounded formatting (use snprintf)"),
+        always("vsprintf", "unsafe-function", "CWE-120", Medium, "unbounded formatting (use vsnprintf)"),
+        cmd("system"),
+        cmd("popen"),
+        cmd("execl"),
+        cmd("execlp"),
+        cmd("execle"),
+        cmd("execv"),
+        cmd("execvp"),
+        cmd("execve"),
+        cmd("std.system"),
+        format_string("printf", 0),
+        format_string("fprintf", 1),
+        format_string("snprintf", 2),
+        format_string("syslog", 1),
+        tainted("memcpy", "unsafe-function", "CWE-119", Medium, "copy size controlled by untrusted input").at(2),
+        tainted("memmove", "unsafe-function", "CWE-119", Medium, "copy size controlled by untrusted input").at(2),
+        tainted("malloc", "unsafe-function", "CWE-789", Medium, "allocation size controlled by untrusted input").at(0),
+        path("fopen"),
+        path("open"),
+        path("unlink"),
+        path("remove"),
+        path("rename"),
+        always("tmpnam", "insecure-temp-file", "CWE-377", Low, "predictable temporary file name"),
+        always("tempnam", "insecure-temp-file", "CWE-377", Low, "predictable temporary file name"),
+        always("mktemp", "insecure-temp-file", "CWE-377", Low, "predictable temporary file name"),
+    ],
+    source_calls: &[
+        "getenv", "fgets", "gets", "scanf", "fscanf", "read", "recv", "recvfrom", "fread", "getchar",
+        "getline", "readline", "std.getline",
+    ],
+    source_paths: &["argv"],
+    sanitizers: &["atoi", "atol", "atoll", "atof", "strtol", "strtoul", "strtod", "strtoll", "basename"],
+};

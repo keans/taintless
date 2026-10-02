@@ -1,0 +1,35 @@
+---
+source: tests/cfg_snapshots.rs
+expression: text
+---
+fn r
+  entry []
+  exit []
+  b2 [2:switch (x) {]
+  b3 !dead []
+  b4 [3:case 1 | 3:... 5 | 4:return 1;]
+  b5 [2:default | 6:return 0;]
+  0 -normal-> 2
+  2 -true-> 4
+  2 -true-> 5
+  3 -normal-> 1
+  4 -return-> 1
+  5 -return-> 1
+fn q
+  entry []
+  exit []
+  b2 [11:a]
+  b3 [11:b]
+  b4 [11:0]
+  b5 [11:int v = a ? b : 0; | 12:a]
+  b6 [12:b]
+  b7 [12:return a && b;]
+  0 -normal-> 2
+  2 -true-> 3
+  2 -false-> 4
+  3 -normal-> 5
+  4 -normal-> 5
+  5 -true-> 6
+  5 -false-> 7
+  6 -normal-> 7
+  7 -return-> 1

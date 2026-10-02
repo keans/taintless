@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  # Lower every function of real open-source projects; any parse error or
+  # panic fails the job (see tests/smoke.rs).
+  corpora:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fetch corpora
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/corpora" && cd "$RUNNER_TEMP/corpora"
+          git clone --depth 1 https://github.com/psf/requests
+          git clone --depth 1 https://github.com/expressjs/express
+          git clone --depth 1 https://github.com/google/gson
+          git clone --depth 1 https://github.com/gin-gonic/gin
+          git clone --depth 1 https://github.com/DaveGamble/cJSON
+          git clone --depth 1 https://github.com/fmtlib/fmt
+          git clone --depth 1 https://github.com/BurntSushi/ripgrep
+          git clone --depth 1 https://github.com/microsoft/TypeScript-Node-Starter
+      - name: Smoke test
+        run: |
+          corpora=$(ls -d "$RUNNER_TEMP"/corpora/*/ | tr '\n' ':')
+          TAINTLESS_CORPUS="$corpora" cargo test --release --test smoke scans_external -- --nocapture

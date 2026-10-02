@@ -1,0 +1,59 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 31, "call": 43, "control": 1, "field": 1, "field_access": 18, "file": 4, "identifier": 183, "literal": 22, "local": 31, "method": 37, "method_return": 39, "other": 300, "param": 16, "return": 1, "type": 3, "type_decl": 4}
+edges: {"argument": 14, "ast": 656, "call": 53, "cdg": 72, "cfg": 122, "contains": 111, "param_in": 2, "reaching": 45, "receiver": 15, "ref": 89, "return_out": 1, "scope": 41, "type_of": 3}
+call Bus.__init__ -> start
+call Bus.emit -> start
+call appended -> start
+call appended -> start
+call appended -> stop
+call appended -> stop
+call appended_position -> start
+call appended_position -> stop
+call appended_position -> stop
+call dispatch -> alpha
+call dispatch -> alpha
+call dispatch -> alpha
+call dispatch -> beta
+call dispatch -> beta
+call dispatch -> beta
+call dispatch -> close
+call dispatch -> down
+call dispatch -> open
+call dispatch -> start
+call dispatch -> stop
+call dispatch -> up
+call each -> close
+call each -> down
+call each -> down
+call each -> open
+call each -> up
+call each -> up
+call fill -> start
+call fill -> stop
+call filled_in_place -> fill
+call filled_in_place -> start
+call filled_in_place -> start
+call filled_in_place -> stop
+call filled_in_place -> stop
+call handed -> open
+call items -> items
+call items -> start
+call items -> stop
+call keyed -> close
+call keyed -> open
+call keyed_dict -> start
+call keyed_list -> stop
+call local_table -> start
+call local_table -> stop
+call objects -> Runner.run
+call objects -> Worker.run
+call pair_key -> items
+call passes -> run_all
+call returned -> make_table
+call returned -> start
+call returned -> stop
+call run_all -> other
+call run_all -> start
