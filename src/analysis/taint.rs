@@ -277,11 +277,50 @@ pub struct FnInfo<'a> {
     pub rules: &'static RuleSet,
 }
 
+/// What one analysis of a function looked at besides its own code, with the values it saw.
+/// Analyzing it again gives the same result as long as all of them still hold.
+#[derive(Clone, Default)]
+struct Reads {
+    /// Summaries of other functions, by version (see `run_pass`; 0: not computed yet).
+    summaries: Vec<(usize, u64)>,
+    /// Single field entries.
+    fields: Vec<(FieldKey, Option<Taint>)>,
+    /// All fields of a class (a closure's captured scope).
+    classes: Vec<(String, Vec<(String, Taint)>)>,
+    /// Sinks closures found for the parameters of a function.
+    outer: Vec<(usize, Option<Vec<(usize, Hit)>>)>,
+}
+
+impl Reads {
+    fn still_hold(&self, versions: &[u64], fields: &FieldTaint, outer: &OuterHits) -> bool {
+        self.summaries.iter().all(|(f, seen)| versions[*f] == *seen)
+            && self.fields.iter().all(|(k, seen)| fields.get(k) == seen.as_ref())
+            && self.classes.iter().all(|(c, seen)| class_fields(fields, c).map(|(v, t)| (v.clone(), t.clone())).eq(seen.iter().cloned()))
+            && self.outer.iter().all(|(id, seen)| outer.get(id) == seen.as_ref())
+    }
+}
+
+fn class_fields<'a>(fields: &'a FieldTaint, class: &'a str) -> impl Iterator<Item = (&'a String, &'a Taint)> {
+    fields.range((class.to_string(), String::new())..).take_while(move |((c, _), _)| c == class).map(|((_, v), t)| (v, t))
+}
+
+/// The results of one group of mutually recursive functions (or of one function) in the
+/// previous pass, reused while everything the group read still holds.
+#[derive(Clone)]
+struct Cached {
+    reads: Reads,
+    results: Vec<(usize, FnResult)>,
+}
+
 struct Env<'a> {
+    /// What the function being analyzed has read so far (see [`Reads`]).
+    reads: std::cell::RefCell<Reads>,
     fns: &'a [FnInfo<'a>],
     resolver: &'a Resolver,
     types: &'a Types,
     summaries: &'a [Option<Summary>],
+    /// Version of each finished summary: equal versions mean equal summaries.
+    versions: &'a [u64],
     /// Working summaries of the recursive group being solved.
     overlay: &'a HashMap<usize, Summary>,
     /// Tainted fields found by the previous pass.
@@ -508,10 +547,34 @@ pub(crate) fn collect_field_fns<'f>(
 
 impl Env<'_> {
     fn summary(&self, id: usize) -> Option<&Summary> {
-        self.overlay.get(&id).or_else(|| self.summaries[id].as_ref())
+        let found = self.overlay.get(&id).or_else(|| self.summaries[id].as_ref());
+        let mut reads = self.reads.borrow_mut();
+        if !reads.summaries.iter().any(|(f, _)| *f == id) {
+            reads.summaries.push((id, self.versions[id]));
+        }
+        found
+    }
+
+    fn field(&self, key: &FieldKey) -> Option<&Taint> {
+        let found = self.fields.get(key);
+        self.reads.borrow_mut().fields.push((key.clone(), found.cloned()));
+        found
+    }
+
+    fn class_fields<'f>(&'f self, class: &'f str) -> Vec<(&'f String, &'f Taint)> {
+        let found: Vec<_> = class_fields(self.fields, class).collect();
+        self.reads.borrow_mut().classes.push((class.to_string(), found.iter().map(|(v, t)| ((*v).clone(), (*t).clone())).collect()));
+        found
+    }
+
+    fn outer_hits(&self, id: usize) -> &[(usize, Hit)] {
+        let found = self.outer.get(&id);
+        self.reads.borrow_mut().outer.push((id, found.cloned()));
+        found.map_or(&[], Vec::as_slice)
     }
 }
 
+#[derive(Clone)]
 struct FnResult {
     findings: Vec<Finding>,
     summary: Summary,
@@ -708,7 +771,7 @@ impl Analyzer<'_> {
                     // cells are kept per variable: a read of `box[0]` sees what was written to `box`
                     let cell = [p.as_str(), p.split('[').next().unwrap_or(p)]
                         .into_iter()
-                        .find_map(|k| self.env.fields.get(&(format!("<deferred {id}>"), k.to_string())));
+                        .find_map(|k| self.env.field(&(format!("<deferred {id}>"), k.to_string())));
                     if let Some(v) = cell {
                         let mut depth = 0;
                         let mut current = self.id;
@@ -734,7 +797,7 @@ impl Analyzer<'_> {
                 }
                 if let Some(key) = self.field_key(p, st)
                     && !st.is_bound(p)
-                    && let Some(ft) = self.env.fields.get(&key)
+                    && let Some(ft) = self.env.field(&key)
                 {
                     for k in ft {
                         if let Cause::Source { desc, .. } = k {
@@ -1393,7 +1456,7 @@ fn analyze_fn(env: &Env, id: usize) -> FnResult {
     // what the enclosing function had in scope where this closure was created
     let class = capture_class(id);
     let mut entry = State::default();
-    for ((_, var), t) in env.fields.range((class.clone(), String::new())..).take_while(|((c, _), _)| *c == class) {
+    for (var, t) in env.class_fields(&class) {
         entry.taint.insert(var.clone(), t.clone());
     }
     for (i, names) in cfg.params.iter().enumerate() {
@@ -1608,7 +1671,7 @@ fn analyze_fn(env: &Env, id: usize) -> FnResult {
     }
     summary.ret_source = ret_src.map(|(line, desc)| format!("{desc} at {}:{line}", base(me.file)));
     // sinks inside closures this function created, reached from its parameters
-    for (param, hit) in env.outer.get(&id).into_iter().flatten() {
+    for (param, hit) in env.outer_hits(id) {
         out.hit(*param, hit.clone());
     }
     out.param_sinks.resize_with(cfg.params.len(), Vec::new);
@@ -1752,6 +1815,9 @@ pub fn analyze_project(
     // them, until no new ones appear; the last pass's findings are the result.
     let mut fields = FieldTaint::new();
     let mut outer = OuterHits::new();
+    let mut carry = Carry { cache: vec![None; comps.len()], summaries: vec![None; fns.len()], versions: vec![0; fns.len()] };
+    // versions start at 1: 0 means a summary that does not exist yet
+    let version_counter = std::sync::atomic::AtomicU64::new(1);
     let mut result = vec![];
     let capture_depth = creators.keys().map(|&id| {
         let mut current = id;
@@ -1765,7 +1831,8 @@ pub fn analyze_project(
     }).max().unwrap_or(0);
     for pass in 0..=MAX_FIELD_ROUNDS + capture_depth * 2 {
         let silent: &(dyn Fn() + Sync) = &|| {};
-        let (findings, found, found_outer) = run_pass(fns, &plan, &fields, &outer, if pass == 0 { progress } else { silent });
+        let ((findings, found, found_outer), next) = run_pass(fns, &plan, &fields, &outer, &carry, &version_counter, if pass == 0 { progress } else { silent });
+        carry = next;
         result = findings;
         let mut next = fields.clone();
         for (k, t) in found {
@@ -1798,16 +1865,29 @@ struct Plan<'a> {
     field_fns: &'a FieldFns,
 }
 
-fn run_pass(fns: &[FnInfo], plan: &Plan, fields: &FieldTaint, outer: &OuterHits, progress: &(dyn Fn() + Sync)) -> Pass {
+/// What a pass leaves for the next one.
+struct Carry {
+    cache: Vec<Option<Cached>>,
+    summaries: Vec<Option<Summary>>,
+    versions: Vec<u64>,
+}
+
+fn run_pass(fns: &[FnInfo], plan: &Plan, fields: &FieldTaint, outer: &OuterHits, prev: &Carry, version_counter: &std::sync::atomic::AtomicU64, progress: &(dyn Fn() + Sync)) -> (Pass, Carry) {
+    let (prev_cache, prev_summaries, prev_versions) = (&prev.cache, &prev.summaries, &prev.versions);
     let Plan { resolver, types, graph, comps, by_level, classes, closures, creators, field_fns } = *plan;
     use rayon::prelude::*;
     let mut summaries: Vec<Option<Summary>> = vec![None; fns.len()];
+    let mut cache: Vec<Option<Cached>> = vec![None; comps.len()];
+    let mut versions: Vec<u64> = vec![0; fns.len()];
     let (mut findings, mut field_taints) = (vec![], vec![]);
     let mut next_outer = OuterHits::new();
     for comps_here in by_level {
-        let solved: Vec<Vec<(usize, FnResult)>> = comps_here
+        let solved: Vec<(usize, Cached)> = comps_here
             .par_iter()
             .map(|&ci| {
+                if let Some(c) = prev_cache[ci].as_ref().filter(|c| c.reads.still_hold(&versions, fields, outer)) {
+                    return (ci, c.clone());
+                }
                 let members: Vec<usize> = comps[ci].iter().map(|n| n.index()).collect();
                 let recursive = members.len() > 1 || graph.contains_edge(NodeIndex::new(members[0]), NodeIndex::new(members[0]));
                 let mut overlay: HashMap<usize, Summary> = HashMap::new();
@@ -1817,9 +1897,16 @@ fn run_pass(fns: &[FnInfo], plan: &Plan, fields: &FieldTaint, outer: &OuterHits,
                     }
                 }
                 let mut results: Vec<(usize, FnResult)> = vec![];
+                // everything any round read: a result is reusable only if none of it changed
+                let mut reads = Reads::default();
                 for _ in 0..if recursive { MAX_SCC_ROUNDS } else { 1 } {
-                    let env = Env { fns, resolver, types, summaries: &summaries, overlay: &overlay, fields, classes, closures, outer, field_fns, creators };
+                    let env = Env { reads: Default::default(), fns, resolver, types, summaries: &summaries, versions: &versions, overlay: &overlay, fields, classes, closures, outer, field_fns, creators };
                     results = members.iter().map(|&m| (m, analyze_fn(&env, m))).collect();
+                    let seen = env.reads.take();
+                    reads.summaries.extend(seen.summaries.into_iter().filter(|(f, _)| !members.contains(f)));
+                    reads.fields.extend(seen.fields);
+                    reads.classes.extend(seen.classes);
+                    reads.outer.extend(seen.outer);
                     let next: HashMap<usize, Summary> = results.iter().map(|(m, r)| (*m, r.summary.clone())).collect();
                     let stable = next == overlay;
                     overlay = next;
@@ -1827,20 +1914,29 @@ fn run_pass(fns: &[FnInfo], plan: &Plan, fields: &FieldTaint, outer: &OuterHits,
                         break;
                     }
                 }
+                reads.summaries.sort_by_key(|(f, _)| *f);
+                reads.summaries.dedup_by_key(|(f, _)| *f);
                 results.iter().for_each(|_| progress());
-                results
+                (ci, Cached { reads, results })
             })
             .collect();
-        for group in solved {
-            for (id, r) in group {
-                summaries[id] = Some(r.summary);
-                findings.extend(r.findings);
-                field_taints.extend(r.field_taints);
+        for (ci, group) in solved {
+            for (id, r) in &group.results {
+                let id = *id;
+                // an unchanged summary keeps its version; a changed one gets a fresh, never reused, number
+                versions[id] = match prev_summaries[id].as_ref() {
+                    Some(old) if *old == r.summary => prev_versions[id],
+                    _ => version_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                };
+                summaries[id] = Some(r.summary.clone());
+                findings.extend(r.findings.iter().cloned());
+                field_taints.extend(r.field_taints.iter().cloned());
                 if let Some(&creator) = creators.get(&id) {
-                    next_outer.entry(creator).or_default().extend(r.outer_sinks);
+                    next_outer.entry(creator).or_default().extend(r.outer_sinks.iter().cloned());
                 }
             }
+            cache[ci] = Some(group);
         }
     }
-    (findings, field_taints, next_outer)
+    ((findings, field_taints, next_outer), Carry { cache, summaries, versions })
 }

@@ -1,7 +1,7 @@
 # taintless: concept
 
 This document explains how `taintless` is built and why its analyses share a
-common model. [README.md](../README.md) is the user manual;
+common model. [guide.md](guide.md) is the user manual;
 [TODO.md](../TODO.md) lists the remaining work.
 
 ## 1. Purpose
@@ -274,18 +274,21 @@ runs on real code. [limitations.md](limitations.md) records precision limits;
 the `tests/iface` single-file cases still await interface dispatch in the
 reference analysis.
 
-## 5. Next step: incremental storage
+## 5. Storage and incremental analysis
 
-The remaining roadmap is in [TODO.md](../TODO.md). The planned SQLite store
-would cache per-file IR, function summaries, CPG nodes and edges, and findings.
-A content hash plus configuration and analysis version would invalidate stale
-facts. Changes would trigger re-resolution of imports and calls, then summary
-recomputation through affected callers until results stop changing.
+The SQLite store at `.taintless/db.sqlite` caches per-file IR by language and
+content hash. It also caches whole-run security findings for an unchanged
+project and stores a CPG for indexed queries and graph exports. Findings
+history and triage survive `clear-cache`. A build stamp invalidates analysis
+facts when the implementation changes.
 
-The main correctness check is equivalence: after a file changes, a warm scan
-must report the same findings as a clean scan. A stored graph could then serve
-indexed queries and graph exports without rebuilding the project each time.
-Storage location, schema and sharing remain design decisions.
+The remaining work is finer invalidation. After an edit, the scanner still
+recomputes all function summaries, and `index` replaces the whole graph.
+Persisted summaries could be recomputed through affected callers until they
+stabilize; changed graph rows would require cross-file `Call`, `Imports` and
+`Reaching` edges to be updated together. Cold, warm and edited-tree scans must
+match `--no-cache`; fixture tests cover this, while external-corpus tests
+remain open. See [TODO.md](../TODO.md).
 
 ## 6. Deliberate limits
 

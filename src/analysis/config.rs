@@ -299,6 +299,13 @@ impl Active {
 }
 
 /// `.taintless.toml` next to the scanned path, else in the working directory.
+/// The configuration file of a nested directory (as listed by [`discover_nested`]).
+pub fn nested_file(dir: &str) -> PathBuf {
+    Path::new(dir).join(CONFIG_FILE)
+}
+
+const CONFIG_FILE: &str = ".taintless.toml";
+
 pub fn discover(scanned: &Path) -> Option<PathBuf> {
     let dir = if scanned.is_dir() { scanned } else { scanned.parent().unwrap_or(Path::new(".")) };
     [dir.join(".taintless.toml"), PathBuf::from(".taintless.toml")].into_iter().find(|p| p.is_file())
@@ -315,7 +322,7 @@ fn load_chain(path: &Path, seen: &mut Vec<PathBuf>) -> Result<Config> {
         bail!("{} extends itself (through {})", path.display(), seen.last().map_or(String::new(), |p| p.display().to_string()));
     }
     seen.push(canon);
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text = crate::inputs::note(&path, std::fs::read_to_string(&path)).with_context(|| format!("reading {}", path.display()))?;
     let mut config: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut merged = Config::default();
@@ -336,7 +343,7 @@ pub fn discover_nested(scanned: &Path, root: Option<&Path>) -> Result<Vec<(Strin
     let root = root.and_then(|r| r.canonicalize().ok());
     let mut out = vec![];
     for entry in ignore::WalkBuilder::new(scanned).hidden(false).build().flatten() {
-        if entry.file_name() != ".taintless.toml" || !entry.path().is_file() {
+        if entry.file_name() != CONFIG_FILE || !entry.path().is_file() {
             continue;
         }
         if root.is_some() && entry.path().canonicalize().ok() == root {

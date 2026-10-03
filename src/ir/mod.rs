@@ -2,8 +2,9 @@
 pub mod builder;
 
 use petgraph::stable_graph::{NodeIndex, StableDiGraph};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeKind {
     Normal,
     True,
@@ -15,7 +16,7 @@ pub enum EdgeKind {
     Exception,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StmtKind {
     Call,
     Assign,
@@ -24,7 +25,7 @@ pub enum StmtKind {
 }
 
 /// Symbolic value of an expression, for taint analysis: what it depends on.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Flow {
     /// Literals and anything that depends on no variable.
     Clean,
@@ -37,7 +38,7 @@ pub enum Flow {
 }
 
 /// A call expression with the values flowing into it.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CallFlow {
     /// Normalized callee: `os.system`, `Runtime.getRuntime.exec`, `Command.new`.
     pub callee: String,
@@ -60,14 +61,14 @@ pub fn closure_marker(line: usize, col: usize) -> String {
     format!("<fn@{line}:{col}>")
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Assign {
     pub target: String,
     pub strong: bool,
     pub value: Flow,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Stmt {
     pub kind: StmtKind,
     /// 1-based source line and column.
@@ -97,15 +98,18 @@ impl Stmt {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Block {
+    /// Not stored: only the entry and exit blocks are labeled, see [`Cfg::restore_labels`].
+    #[serde(skip)]
     pub label: Option<&'static str>,
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Cfg {
     /// Source retained for graph views built from an in-memory CFG project.
+    #[serde(skip)]
     pub source: std::sync::Arc<str>,
     pub name: String,
     /// 1-based line where the function starts.
@@ -151,6 +155,12 @@ pub struct Cfg {
 }
 
 impl Cfg {
+    /// Put back the block labels a stored CFG does not carry: the entry and exit blocks.
+    pub fn restore_labels(&mut self) {
+        self.graph[self.entry].label = Some("entry");
+        self.graph[self.exit].label = Some("exit");
+    }
+
     /// Declared types of parameters and locals as `(name, class)`, except names this function
     /// declares more than once with different types (shadowing in nested scopes): those are
     /// not typed at all rather than given whichever declaration came last.

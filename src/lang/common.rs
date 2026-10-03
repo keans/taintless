@@ -159,7 +159,7 @@ pub struct AssignParts<'a> {
     pub augmented: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ImportKind {
     /// `import x`, `use x`, `require("x")`.
     Module,
@@ -172,7 +172,7 @@ pub enum ImportKind {
 }
 
 /// A dependency on another module / file, as written in the source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Import {
     /// The module path exactly as written (`a.b`, `./lib`, `crate::x`, `x/y.h`).
     pub module: String,
@@ -592,7 +592,7 @@ pub fn scoped(v: Typed, n: Node) -> Scoped {
 }
 
 /// Types a file declares, which methods in other files may belong to.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Declarations {
     /// Struct / class definitions: `(name, fields)`, field types as written.
     pub types: Vec<(String, Typed)>,

@@ -23,3 +23,6 @@ perf.data*
 
 # Local environment
 .env
+
+# taintless cache
+.taintless/

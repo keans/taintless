@@ -72,6 +72,22 @@ impl<'r> Fingerprints<'r> {
     }
 }
 
+/// Stable ids for `findings`: a hash of rule, message and the normalized source line (or of
+/// file and function when the line is unavailable), numbered when several findings share one.
+pub fn finding_ids(findings: &[Finding], read: &dyn Fn(&Path) -> Option<String>) -> Vec<String> {
+    let mut fp = Fingerprints::new(read);
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    findings
+        .iter()
+        .map(|f| {
+            let base = fp.of(f).unwrap_or_else(|| fnv(&format!("{}\0{}\0{}\0{}", f.rule, f.message, rel_path(&f.file), f.function)));
+            let n = seen.entry(base.clone()).or_default();
+            *n += 1;
+            if *n == 1 { base } else { format!("{base}-{n}") }
+        })
+        .collect()
+}
+
 impl Baseline {
     /// Entries without fingerprints (what older versions wrote).
     pub fn from_findings(findings: &[Finding]) -> Self {

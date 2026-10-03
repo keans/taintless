@@ -1,7 +1,7 @@
 # Known limitations
 
 What `taintless` does not do, does only partly, or does by approximation. Read
-it together with the user manual ([README.md](../README.md)), the open work
+it together with the [user guide](guide.md), the open work
 list ([TODO.md](../TODO.md)) and the design notes ([concept.md](concept.md)).
 
 Legend: **by design** = a deliberate trade-off that will not change; **gap** =
@@ -63,10 +63,11 @@ answers "may", so it errs on one side on purpose.
   Files with other extensions are skipped. Dependencies never cross language
   families (a Python call is never linked to a Rust function).
 
-- **No incremental analysis or cache**
+- **Incremental work is limited**
   **Kind:** gap
-  **Consequence:** Every run parses and analyzes the whole scanned tree. The
-  whole project is held in memory.
+  **Consequence:** Parsed files and whole-run security findings are cached.
+  After any project change, interprocedural analysis still runs for every
+  function. `index` rebuilds the whole stored graph after a change.
 
 ## 2. Parsing and control flow
 
@@ -120,39 +121,22 @@ answers "may", so it errs on one side on purpose.
 
 ### 3.1 Precision of what is tracked
 
-- **Resolution by name.** Calls are resolved by name within one language. Types
-  are used only where they are declared, or a constructor or factory shows
-  them. Among same-named functions the ones the calling file can see win (own
-  file, imports two levels deep, same Go/Java package, the `.c` behind a
-  header). A name shared by more than 3 functions is considered too ambiguous
-  and links nothing. *gap / approximation*
-- **Guesses never invent facts.** A method called on an unknown object keeps
-  the default "the result depends on the receiver and arguments" but never
-  contributes sources, sinks or summaries, unless it is explicitly passed as a
-  callback. This costs recall (a real call into your code is missed when the
-  receiver's class is unknown) in return for precision. *by design*
-- **Declared types.** Declared types of parameters, returns and locals are
-  used; generics and wrappers (`Optional<T>`, `Result<T, E>`) are not
-  unwrapped. Type aliases are not resolved. Declarations are not joined across
-  files for Go/Rust struct definitions and C++ headers. *gap (TODO)*
-- **One type per name in `flow`.** A reassignment such as `x = B()` after `x =
-  A()` in different scopes is not resolved per scope there (declared types
-  are). *gap (TODO)*
-- **Aliasing.** `b = a` is followed for known instances; aliases through
-  fields, containers and calls are not. For languages with value semantics (Go
-  structs, C++ objects, Rust moves) a plain copy is treated like a reference
-  copy, which can create false positives. *gap / approximation*
-- **Per class, not per instance.** Fields of objects that were not constructed
-  in the function are tracked per class: one tainted instance makes the field
-  tainted for every instance read through the class-level fact. *gap (TODO)*
-- **Containers.** Individual array and map keys are not distinguished in taint
-  (a literal key picks its element in the call graph; computed keys read the
-  whole container). Unknown-object callback targets and container contents are
-  conservative sets. *gap / approximation*
-- **Only one level of `self` flows through summaries per mechanism.** Receiver
-  state, parameters, return values, fields and callbacks are summarized; a flow
-  that needs several of them to cooperate across more than a few call levels
-  can be cut by the limits below.
+- **Resolution by name.** Calls are resolved within one language. Declared
+  types, constructors, factories, imports and visibility narrow the targets.
+  A name shared by more than three functions is considered too ambiguous.
+  A method on an object of unknown class may remain unresolved. *approximation*
+- **Guesses never invent facts.** A name-only method guess can propagate
+  existing taint but cannot create a source, sink or summary. *by design*
+- **Aliasing and fields.** Known aliases, including those through calls and
+  containers, are followed. Shared fields of objects not constructed locally
+  may be tracked per class rather than per instance; this can mix independent
+  objects. Go struct copies, C++ objects and Rust moves can also be treated
+  like reference copies. *approximation*
+- **Containers.** Literal keys distinguish entries in Python, JS/TS and Go;
+  unknown keys conservatively read the whole container. Dynamic contents and
+  unknown callback targets remain conservative sets. *approximation*
+- **Summary limits.** Parameters, receivers, returns, callbacks, fields and
+  captures are summarized, but deep chains can hit the caps below.
 
 ### 3.2 Built-in caps (results are truncated, not wrong)
 
@@ -221,68 +205,46 @@ answers "may", so it errs on one side on purpose.
 
 ## 4. Call graph (`calls`)
 
-- Resolved by name; class hierarchies are used for Python, Java, TypeScript /
-  JavaScript, C++ base classes and Rust traits, with virtual dispatch to
-  overrides.
-- Go interfaces are structural: they link to types defining every listed method
-  (embedded interfaces included) but not to anything outside the scanned code,
-  and an interface known only from a declaration that is never called through
-  has limited resolution. *gap (TODO)*
-- Calls through containers follow what was put in them; computed keys read the
-  whole container; containers a callee fills in place are not seen by its
-  caller; `for k, v in d.items()` gives `k` what `v` holds; a Go struct with no
-  methods of its own is not a known class, so what it embeds is not promoted
-  through it. *gap (TODO)*
-- Dynamic dispatch on values whose type cannot be inferred is by name only.
+- Name and type resolution follows class hierarchies and overrides in the
+  scanned project. Go interfaces include embedded methods and embedded
+  structs. Calls into code outside the scanned path remain external.
+- Literal container keys select entries; keys inferred from branches and
+  parameters select each possible entry. Unknown keys read the whole
+  container. A callable of unknown origin cannot be linked exactly.
+- Reflection, dynamic method creation and arbitrary runtime dispatch are
+  outside the model.
 
 ## 5. File dependencies (`deps`)
 
-- Imports resolve to **scanned** files; everything else is reported as
-  external. Anything outside the scanned path (including a vendored dependency
-  you did not scan) is external.
-- Manifest support: `tsconfig.json` / `jsconfig.json` (`baseUrl`, `paths`,
-  relative `extends`), `go.mod`, `Cargo.toml` (crate names). **Not** supported:
-  `package.json` workspaces and `exports`, `go.work` and `replace`, Python
-  `pyproject` / `src` layouts beyond suffix matching, non-standard Cargo
-  `[lib]` layouts in `use crate::`, conditional exports, package aliases from
-  lockfiles. *gap (TODO)*
-- Python relies on suffix matching of module paths; two packages with the same
-  tail path can be confused when neither is nearer to the importer.
-- Dynamic imports are found only with string literals (`import("./x")`,
-  `importlib.import_module("a.b")`); computed module names are not.
-- A baseline of "who uses what" is file-level: re-exports are followed two
-  levels deep.
+- Imports resolve to scanned files. A dependency outside the scanned path is
+  external, even if it exists elsewhere on disk.
+- Supported manifests include `tsconfig.json`, `jsconfig.json`, `go.mod`,
+  `go.work`, `Cargo.toml`, `package.json` and Python project metadata. Dynamic
+  module names, conditional exports and aliases defined only in lockfiles can
+  remain unresolved.
+- Re-exports are followed to a limited depth. Same-named packages with similar
+  paths can still be confused when visibility does not distinguish them.
 
 ## 6. Data flow (`flow`)
 
-- Elements (`a[i]`) count as `a`; field nodes are per class, not per instance.
-- Aliases through containers, several assignments or calls are not followed; a
-  variable assigned once from another is an alias.
-- One type per variable name (see 3.1).
-- The graph can be too large to draw for big projects; use `--from` and
-  `--function`.
-- Edges are "may flow", not "does flow"; there is no value or condition
-  information on edges (except control edges with `--control`).
+- `flow` is a view drawn from the CPG's reaching and call edges. It follows
+  known aliases and literal container elements; unknown keys are conservative.
+- Fields shared between methods may be represented per class, so separate
+  instances can appear to share a value.
+- Edges mean a value *may* flow. They do not prove a feasible execution path.
+  The graph can be large; use `--from` and `--function` to filter it.
 
 ## 7. Code property graph (`cpg`)
 
-The CPG is under construction (see TODO.md, Phase 4). Today:
-
-- `dataflow`, `callgraph` and `deps` are **not yet views** of the CPG;
-  `Cpg::build` calls them and copies their edges, so the project is resolved
-  more than once.
-- The AST layer has the basic node kinds only: operators with operand order,
-  locals, type nodes and `Param` / `Local` nodes are open.
-- Interprocedural `Reaching` edges, scoped symbols (`Ref`), declared
-  field/local types and inheritance edges are partial or missing.
-- Taint on the CPG is **not** at parity with `analysis/taint.rs`
-  (constructor-built instances, aliases, callbacks and closures, keyword
-  arguments, per-argument sanitizers, source/sink messages and call chains are
-  open); the reference implementation for findings remains `analysis/taint.rs`.
-- No persisted graph and no Neo4j CSV export yet; node ids in exports are per
-  export.
-- No snapshot tests for CPG output and no corpus smoke test on node/edge
-  counts.
+- The CPG has stable node ids, scoped symbols, interprocedural `Reaching`
+  edges, calls and imports. It can be stored with `index` and exported as JSON,
+  DOT, GraphML or Neo4j CSV.
+- The CPG taint query matches the reference findings on fixtures and this
+  repository's Rust sources. The `security` command still uses the separate
+  summary-based implementation. Both analyses have finite budgets and inherit
+  the language and rule limits above.
+- A stored graph is rebuilt as a whole when the project changes. Queries over
+  the stored graph are approximate; `query reach` does not model sanitizers.
 
 ## 8. Findings workflow
 
@@ -312,7 +274,9 @@ The CPG is under construction (see TODO.md, Phase 4). Today:
 
 ## 9. Performance and scale
 
-- Whole-project analysis in memory; no streaming and no cache between runs.
+- Analysis still holds the project in memory. The cache skips parsing of
+  unchanged files and reuses security findings for an unchanged project; it
+  does not yet recompute only affected functions after an edit.
 - Parsing and per-file work are parallel; the interprocedural phase is parallel
   only across independent groups of the call graph, so one very large strongly
   connected group serializes.

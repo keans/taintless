@@ -104,7 +104,7 @@ pub fn to_json(cpg: &Cpg, sel: &Selection) -> Value {
     json!({"files": files, "nodes": nodes, "edges": edges})
 }
 
-fn xml(s: &str) -> String {
+pub(crate) fn xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
@@ -194,12 +194,12 @@ pub fn to_dot(cpg: &Cpg, sel: &Selection) -> String {
     s
 }
 
-fn csv(s: &str) -> String {
+pub(crate) fn csv(s: &str) -> String {
     if s.contains([',', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() }
 }
 
 /// `Method`, `MethodReturn`, `FieldAccess`, ...
-fn label(kind: &str) -> String {
+pub(crate) fn label(kind: &str) -> String {
     kind.split('_').map(|w| w[..1].to_uppercase() + &w[1..]).collect()
 }
 

@@ -17,6 +17,7 @@ use taintless::{
     },
     ir::Cfg,
     lang::{self, Language},
+    store,
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,14 @@ use std::time::{Duration, Instant};
 #[derive(Parser)]
 #[command(about = "Multi-language code scanner: control-flow graphs, security checks, call graph")]
 struct Cli {
+    /// Do not read or write the cache of parsed files.
+    #[arg(long, global = true)]
+    no_cache: bool,
+    /// The cache database (default: `.taintless/db.sqlite` in the project root, the nearest
+    /// directory above the scanned path (or the working directory) that has a cache, a `.git` or a
+    /// `.taintless.toml`).
+    #[arg(long, global = true)]
+    cache: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -73,6 +82,51 @@ enum Level {
     Dir,
 }
 
+#[derive(Subcommand)]
+enum Query {
+    /// Who calls the functions whose name contains NAME.
+    Callers { name: String },
+    /// What the functions whose name contains NAME call.
+    Callees { name: String },
+    /// Statements containing TO that data from statements containing FROM can reach, with the
+    /// shortest chain of statements. An over-approximation: it does not know which calls sanitize.
+    Reach { from: String, to: String },
+    /// Stored findings (see `security --store`) counted by rule or by directory.
+    Findings {
+        #[arg(long)]
+        by_dir: bool,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum QueryFormat {
+    Text,
+    Json,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum StoredFormat {
+    Neo4j,
+    Graphml,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TriageStatus {
+    Open,
+    Accepted,
+    FalsePositive,
+}
+
+impl TriageStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Accepted => "accepted",
+            Self::FalsePositive => "false-positive",
+        }
+    }
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum MinSeverity {
     Low,
@@ -92,6 +146,50 @@ impl From<MinSeverity> for Severity {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Delete every stored result of the cache (triage data is kept).
+    ClearCache,
+    /// Set the status of stored findings (see `security --store`, `history`): by id, or all
+    /// those of a rule or file. A finding that returns after being fixed is open again.
+    Triage {
+        #[arg(value_enum)]
+        status: TriageStatus,
+        /// Ids of findings (as printed by `security --store` and `history`).
+        ids: Vec<String>,
+        /// Every finding of this rule.
+        #[arg(long)]
+        rule: Option<String>,
+        /// Every finding whose path contains this text.
+        #[arg(long)]
+        file: Option<String>,
+        /// Why (shown by `history`, kept in SARIF).
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Show what the cache database holds and how big it is.
+    CacheStatus,
+    /// Store the code property graph of a project in the cache database, for `query` and `export-graph`.
+    Index { path: PathBuf },
+    /// Ask the stored graph (see `index`) a question.
+    Query {
+        #[command(subcommand)]
+        what: Query,
+        #[arg(long, value_enum, default_value = "text", global = true)]
+        format: QueryFormat,
+    },
+    /// Write the stored graph (see `index`) for graph tools; node ids are stable across exports.
+    ExportGraph {
+        #[arg(long, value_enum)]
+        format: StoredFormat,
+        /// Directory for the files of `--format neo4j`; GraphML goes to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// List the findings recorded by `security --store`.
+    History {
+        /// Include findings that are no longer reported.
+        #[arg(long)]
+        all: bool,
+    },
     /// Print per-function control-flow graphs.
     Cfg {
         path: PathBuf,
@@ -124,6 +222,10 @@ enum Cmd {
         /// With `--write-baseline`: the entries stop hiding findings after this many days.
         #[arg(long, value_name = "DAYS", requires = "write_baseline")]
         review_after: Option<u64>,
+        /// Record the findings in the cache database with first/last seen dates, and hide
+        /// those triaged as accepted or false positive.
+        #[arg(long)]
+        store: bool,
     },
     /// Show which file depends on which: imports, includes and calls across files.
     Deps {
@@ -187,6 +289,8 @@ struct Loaded {
     imports: Vec<lang::common::Import>,
     /// The structs / classes and type aliases the file declares (linked to methods in other files).
     decls: lang::common::Declarations,
+    /// Key of the file's stored facts: its language and content.
+    key: String,
 }
 
 fn source_of(l: &Loaded) -> std::io::Result<String> {
@@ -196,9 +300,14 @@ fn source_of(l: &Loaded) -> std::io::Result<String> {
     }
 }
 
-type Parsed = (PathBuf, Result<(Language, Vec<Cfg>, Vec<lang::common::Import>, lang::common::Declarations)>);
+type Parsed = (PathBuf, Result<(Language, String, store::FileFacts)>);
 
 struct Pipeline {
+    store: Option<store::Store>,
+    /// The findings of an identical earlier run, found before any file was decoded (`ok` is then empty).
+    cached: Option<Vec<Finding>>,
+    /// Files and functions scanned (known without `ok` when `cached`).
+    counts: (usize, usize),
     ok: Vec<Loaded>,
     failed: bool,
     skipped: usize,
@@ -216,6 +325,13 @@ fn emit(format: CallFormat, text: impl FnOnce() -> String, dot: impl FnOnce() ->
 }
 
 impl Pipeline {
+    /// Fingerprint of the loaded sources and the configuration files in play.
+    fn run_key(&self, config_files: &[PathBuf]) -> String {
+        let files: Vec<(&Path, &str)> = self.ok.iter().map(|l| (l.file.as_path(), l.key.as_str())).collect();
+        let configs: Vec<&Path> = config_files.iter().map(PathBuf::as_path).collect();
+        store::project_key(&files, &configs)
+    }
+
     fn exit_if_failed(&self) {
         if self.failed {
             std::process::exit(1);
@@ -244,9 +360,12 @@ impl Pipeline {
 }
 
 /// Parse one already-read file into CFGs.
-fn analyze(path: &Path, src: &str) -> Result<(Language, Vec<Cfg>, Vec<lang::common::Import>, lang::common::Declarations)> {
-    let l = lang::Language::detect_with_source(path, src).expect("filtered by detect");
-    Ok((l, lang::build_cfgs(l, src)?, lang::imports(l, src).unwrap_or_default(), lang::declarations(l, src).unwrap_or_default()))
+fn analyze(lang: Language, src: &str) -> Result<store::FileFacts> {
+    Ok(store::FileFacts {
+        cfgs: lang::build_cfgs(lang, src)?,
+        imports: lang::imports(lang, src).unwrap_or_default(),
+        decls: lang::declarations(lang, src).unwrap_or_default(),
+    })
 }
 
 /// A bar for one stage; hidden automatically when stderr is not a terminal.
@@ -256,7 +375,9 @@ fn stage_bar(len: usize, stage: &str) -> Result<ProgressBar> {
 }
 
 /// Discover, read and lower every supported file under `path`.
-fn load(path: &Path) -> Result<Pipeline> {
+/// With `configs`, the stored findings of an identical earlier run are looked up first (see
+/// `Pipeline::cached`); `configs` are the configuration files in play.
+fn load(path: &Path, cache: Option<&Path>, configs: Option<&[PathBuf]>) -> Result<Pipeline> {
     let started = Instant::now();
 
     // Stage 0: discover files. The total is unknown, so show a spinner with a count.
@@ -294,27 +415,92 @@ fn load(path: &Path) -> Result<Pipeline> {
         .collect();
     bar.finish_and_clear();
 
-    // Stage 2: parse and build CFGs (CPU bound). `collect` keeps the walk
-    // order so output is stable.
-    let bar = stage_bar(sources.len(), "analyzing")?;
-    let results: Vec<Parsed> = sources
+    // Stage 2: parse and build CFGs (CPU bound), unless the cache holds the file's facts.
+    // `collect` keeps the walk order so output is stable.
+    let mut store = cache.and_then(|p| match store::Store::open(p).and_then(|mut s| s.begin_run().map(|()| s)) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!("warning: cache disabled: {e:#}");
+            None
+        }
+    });
+    // (path, language, key, source or read error)
+    let prepared: Vec<_> = sources
+        .into_par_iter()
+        .map(|(p, src)| match src {
+            Ok(s) => {
+                let lang = lang::Language::detect_with_source(&p, &s).expect("filtered by detect");
+                let key = store::facts_key(lang, &s);
+                (p, Ok((lang, key, s)))
+            }
+            Err(e) => (p, Err(e)),
+        })
+        .collect();
+    let stored: Vec<Option<Vec<u8>>> = prepared
+        .iter()
+        .map(|(_, r)| match (&store, r) {
+            (Some(st), Ok((_, key, _))) => st.get_raw(key).ok().flatten(),
+            _ => None,
+        })
+        .collect();
+    if let (Some(configs), Some(st)) = (configs, store.as_mut())
+        && prepared.iter().all(|(_, r)| r.is_ok())
+    {
+        let files: Vec<(&Path, &str)> = prepared.iter().filter_map(|(p, r)| r.as_ref().ok().map(|(_, key, _)| (p.as_path(), key.as_str()))).collect();
+        let configs: Vec<&Path> = configs.iter().map(PathBuf::as_path).collect();
+        if let Some((found, nfiles, nfns)) = st.get_findings(&store::project_key(&files, &configs)) {
+            // the files' own entries count as used too, or they would age out behind a long run of hits
+            let keys: Vec<String> = files.iter().map(|(_, k)| k.to_string()).collect();
+            if let Err(e) = st.put_all(&[], &keys) {
+                eprintln!("warning: cache not updated: {e:#}");
+            }
+            return Ok(Pipeline { store, cached: Some(found), counts: (nfiles, nfns), ok: vec![], failed: false, skipped, started });
+        }
+    }
+    let caching = store.is_some();
+    let bar = stage_bar(prepared.len(), "analyzing")?;
+    // `Some((key, None))`: the facts came from the cache; `Some((key, Some(bytes)))`: they are new
+    let results: Vec<(Parsed, Option<(String, Option<Vec<u8>>)>)> = prepared
         .par_iter()
+        .zip(stored.par_iter())
         .progress_with(bar.clone())
-        .map(|(p, src)| {
+        .map(|((p, r), blob)| {
             bar.set_message(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-            let res = match src {
-                Ok(s) => analyze(p, s),
-                Err(e) => Err(anyhow::anyhow!("{e:#}")),
+            let (lang, key, s) = match r {
+                Ok(v) => v,
+                Err(e) => return ((p.clone(), Err(anyhow::anyhow!("{e:#}"))), None),
             };
-            (p.clone(), res)
+            if let Some(f) = blob.as_deref().and_then(|b| store::decode(b, s)) {
+                return ((p.clone(), Ok((*lang, key.clone(), f))), Some((key.clone(), None)));
+            }
+            match analyze(*lang, s) {
+                Ok(f) => {
+                    let new = caching.then(|| store::encode(&f).ok().map(|b| (key.clone(), Some(b)))).flatten();
+                    ((p.clone(), Ok((*lang, key.clone(), f))), new)
+                }
+                Err(e) => ((p.clone(), Err(e)), None),
+            }
         })
         .collect();
     bar.finish_and_clear();
+    let (results, fresh): (Vec<Parsed>, Vec<_>) = results.into_iter().unzip();
+    if let Some(st) = store.as_mut() {
+        let (mut new, mut hits) = (vec![], vec![]);
+        for (key, payload) in fresh.into_iter().flatten() {
+            match payload {
+                Some(payload) => new.push((key, payload)),
+                None => hits.push(key),
+            }
+        }
+        if let Err(e) = st.put_all(&new, &hits) {
+            eprintln!("warning: cache not updated: {e:#}");
+        }
+    }
 
     let mut ok = vec![];
     for (file, res) in results {
         match res {
-            Ok((lang, cfgs, imports, decls)) => ok.push(Loaded { file, lang, cfgs, imports, decls }),
+            Ok((lang, key, f)) => ok.push(Loaded { file, lang, cfgs: f.cfgs, imports: f.imports, decls: f.decls, key }),
             Err(e) => {
                 eprintln!("{}: {e:#}", file.display());
                 failed = true;
@@ -324,23 +510,138 @@ fn load(path: &Path) -> Result<Pipeline> {
     // methods learn the fields of structs / classes declared in other files; aliases are resolved
     let mut linked: Vec<_> = ok.iter_mut().map(|l| (l.lang, &mut l.cfgs, &l.decls)).collect();
     analysis::link::link_declarations(&mut linked);
-    Ok(Pipeline { ok, failed, skipped, started })
+    let counts = (ok.len(), ok.iter().map(|l| l.cfgs.len()).sum());
+    Ok(Pipeline { store, cached: None, counts, ok, failed, skipped, started })
 }
 
 fn summary(p: &Pipeline) {
     eprintln!(
         "scanned {} files ({} functions) in {:.2?}, skipped {} unsupported",
-        p.ok.len(),
-        p.ok.iter().map(|l| l.cfgs.len()).sum::<usize>(),
+        p.counts.0,
+        p.counts.1,
         p.started.elapsed(),
         p.skipped
     );
 }
 
+/// One answer of `query` as text.
+fn query_text(what: &Query, row: &serde_json::Value) -> String {
+    let (str_of, int_of) = (|k: &str| row[k].as_str().unwrap_or("").to_string(), |k: &str| row[k].as_i64().unwrap_or(0));
+    match what {
+        Query::Callers { .. } | Query::Callees { .. } => format!(
+            "{} ({}:{}) calls {} at {}:{}\n",
+            str_of("function"), str_of("file"), int_of("line"), str_of("callee"), str_of("call_file"), int_of("call_line")
+        ),
+        Query::Reach { .. } => {
+            let mut s = format!("{}:{}: {}\n", str_of("file"), int_of("line"), str_of("code"));
+            for step in row["path"].as_array().into_iter().flatten() {
+                s += &format!("    via {}:{}: {}\n", step["file"].as_str().unwrap_or(""), step["line"].as_i64().unwrap_or(0), step["code"].as_str().unwrap_or(""));
+            }
+            s
+        }
+        Query::Findings { .. } => format!("{}  {}\n", int_of("count"), str_of("group")),
+    }
+}
+
+/// Where the cache database lives: an existing one above `start`, else next to the nearest
+/// `.git` or `.taintless.toml`, else in `start` itself (a file's directory).
+fn default_cache(start: &Path) -> PathBuf {
+    const DB: &str = ".taintless/db.sqlite";
+    let abs = start.canonicalize().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(start));
+    let dir = if abs.is_dir() { abs.clone() } else { abs.parent().map(Path::to_path_buf).unwrap_or(abs) };
+    let up = || dir.ancestors();
+    up().find(|d| d.join(DB).exists())
+        .or_else(|| up().find(|d| d.join(".git").exists() || d.join(".taintless.toml").exists()))
+        .unwrap_or(&dir)
+        .join(DB)
+}
+
 fn main() -> Result<()> {
-    match Cli::parse().cmd {
+    let cli = Cli::parse();
+    let scanned = match &cli.cmd {
+        Cmd::Cfg { path, .. } | Cmd::Security { path, .. } | Cmd::Deps { path, .. } | Cmd::Flow { path, .. } | Cmd::Cpg { path, .. } | Cmd::Calls { path, .. } | Cmd::Index { path } => path.clone(),
+        _ => PathBuf::from("."),
+    };
+    let db_path = cli.cache.clone().unwrap_or_else(|| default_cache(&scanned));
+    let cache = (!cli.no_cache).then_some(db_path.as_path());
+    if cache.is_some() {
+        // configuration is read before the cache opens, so recording starts here
+        taintless::inputs::enable();
+    }
+    match cli.cmd {
+        Cmd::Triage { status, ids, rule, file, reason } => {
+            let n = store::Store::open(&db_path)?.set_status(status.as_str(), reason.as_deref(), &ids, rule.as_deref(), file.as_deref())?;
+            if n == 0 {
+                anyhow::bail!("no stored finding matches (run `security --store`, then `history`)");
+            }
+            eprintln!("{n} finding(s) set to {}", status.as_str());
+        }
+        Cmd::CacheStatus => {
+            for line in store::Store::open(&db_path)?.status()? {
+                println!("{line}");
+            }
+        }
+        Cmd::Index { path } => {
+            let mut p = load(&path, cache, None)?;
+            summary(&p);
+            let mut db = p.store.take().ok_or_else(|| anyhow::anyhow!("`index` needs the cache (not --no-cache)"))?;
+            let key = p.run_key(&[]);
+            if db.graph_key().as_deref() == Some(key.as_str()) {
+                eprintln!("graph is up to date");
+            } else {
+                let sources = p.cpg_sources()?;
+                let files = p.cpg_files(&sources);
+                let cpg = taintless::cpg::Cpg::build(&files)?;
+                let (nodes, edges) = store::graph::rows(&cpg);
+                db.replace_graph(&key, &nodes, &edges)?;
+                eprintln!("stored {} nodes and {} edges in {}", nodes.len(), edges.len(), db_path.display());
+            }
+            p.exit_if_failed();
+        }
+        Cmd::Query { what, format } => {
+            let db = store::Store::open(&db_path)?;
+            let rows = match &what {
+                Query::Callers { name } => db.calls(name, true)?,
+                Query::Callees { name } => db.calls(name, false)?,
+                Query::Reach { from, to } => db.reachable(from, to)?,
+                Query::Findings { by_dir } => db.findings_by(*by_dir)?,
+            };
+            match format {
+                QueryFormat::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
+                QueryFormat::Text => {
+                    for r in &rows {
+                        print!("{}", query_text(&what, r));
+                    }
+                }
+            }
+        }
+        Cmd::ExportGraph { format, out } => {
+            let db = store::Store::open(&db_path)?;
+            match format {
+                StoredFormat::Graphml => print!("{}", db.graphml()?),
+                StoredFormat::Neo4j => {
+                    let dir = out.ok_or_else(|| anyhow::anyhow!("--format neo4j needs --out <directory>"))?;
+                    let (nodes, edges) = db.neo4j()?;
+                    std::fs::create_dir_all(&dir)?;
+                    std::fs::write(dir.join("nodes.csv"), nodes)?;
+                    std::fs::write(dir.join("edges.csv"), edges)?;
+                    eprintln!("wrote {0}/nodes.csv and {0}/edges.csv", dir.display());
+                }
+            }
+        }
+        Cmd::History { all } => {
+            for row in store::Store::open(&db_path)?.history(all)? {
+                println!("{row}");
+            }
+        }
+        Cmd::ClearCache => {
+            if db_path.exists() {
+                store::Store::open(&db_path)?.clear()?;
+            }
+            eprintln!("cleared {}", db_path.display());
+        }
         Cmd::Cfg { path, format } => {
-            let p = load(&path)?;
+            let p = load(&path, cache, None)?;
             summary(&p);
             match format {
                 // One document: concatenated digraphs would give invalid SVG in `dot`.
@@ -376,12 +677,14 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Cmd::Security { path, format, min_severity, config: config_path, no_suppress, baseline, write_baseline, review_after } => {
+        Cmd::Security { path, format, min_severity, config: config_path, no_suppress, baseline, write_baseline, review_after, store: keep } => {
             // the configuration shapes the rules, so it is installed before anything is analyzed
             let config_file = config_path.or_else(|| config::discover(&path));
+            let mut config_paths: Vec<PathBuf> = config_file.iter().cloned().collect();
             let setup = (|| -> anyhow::Result<bool> {
                 let root = config_file.as_deref().map(config::load).transpose()?;
                 let nested = config::discover_nested(&path, config_file.as_deref())?;
+                config_paths.extend(nested.iter().map(|(dir, _)| config::nested_file(dir)));
                 if root.is_none() && nested.is_empty() {
                     return Ok(false);
                 }
@@ -400,7 +703,9 @@ fn main() -> Result<()> {
                     std::process::exit(2);
                 }
             }
-            let p = load(&path)?;
+            let mut p = load(&path, cache, Some(&config_paths))?;
+            let mut store = p.store.take();
+            let cached = p.cached.take();
             // Stage 3: taint and rule analysis per file.
             let project = p.project();
             let bar = ProgressBar::new(analysis::function_count(&project) as u64).with_style(
@@ -408,7 +713,21 @@ fn main() -> Result<()> {
                     .progress_chars("=> "),
             );
             let min: Severity = min_severity.into();
-            let mut found: Vec<Finding> = analysis::check_project(&project, &|| bar.inc(1));
+            // A run over the same sources, configuration and manifests is served from the cache.
+            let mut found: Vec<Finding> = match cached {
+                Some(f) => f,
+                None => {
+                    let f = analysis::check_project(&project, &|| bar.inc(1));
+                    // an incomplete scan is not stored: a hit must mean every file was analyzed
+                    if !p.failed
+                        && let Some(s) = store.as_mut()
+                        && let Err(e) = s.put_findings(&p.run_key(&config_paths), &f, p.counts.0, p.counts.1)
+                    {
+                        eprintln!("warning: cache not updated: {e:#}");
+                    }
+                    f
+                }
+            };
             found.retain(|f| f.severity >= min);
             bar.finish_and_clear();
             let mut notes = vec![];
@@ -441,6 +760,37 @@ fn main() -> Result<()> {
                 }
             }
             found.sort_by(|a, b| (&a.file, a.line, a.col, a.rule).cmp(&(&b.file, b.line, b.col, b.rule)));
+            let mut stored = findings::Stored::default();
+            if keep {
+                match store.as_mut() {
+                    None => eprintln!("warning: --store needs the cache (not --no-cache)"),
+                    Some(s) => {
+                        let ids = analysis::baseline::finding_ids(&found, &|f| std::fs::read_to_string(f).ok());
+                        match s.record_findings(&ids, &found, &suppress::today()) {
+                            Ok(()) => {
+                                // after recording: a finding that came back is open again
+                                let triaged = s.triaged().unwrap_or_default();
+                                let (mut shown, mut shown_ids) = (vec![], vec![]);
+                                for (finding, id) in std::mem::take(&mut found).into_iter().zip(ids) {
+                                    match triaged.get(&id) {
+                                        Some(t) => stored.triaged.push(findings::Triaged { finding, id, status: t.status.clone(), reason: t.reason.clone() }),
+                                        None => {
+                                            shown.push(finding);
+                                            shown_ids.push(id);
+                                        }
+                                    }
+                                }
+                                found = shown;
+                                stored.ids = shown_ids;
+                                if !stored.triaged.is_empty() {
+                                    notes.push(format!("{} triaged as accepted or false positive", stored.triaged.len()));
+                                }
+                            }
+                            Err(e) => eprintln!("warning: findings not stored: {e:#}"),
+                        }
+                    }
+                }
+            }
             summary(&p);
             let count = |s: Severity| found.iter().filter(|f| f.severity == s).count();
             eprintln!(
@@ -452,9 +802,9 @@ fn main() -> Result<()> {
                 if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) }
             );
             match format {
-                ReportFormat::Text => print!("{}", findings::to_text(&found)),
-                ReportFormat::Json => println!("{}", serde_json::to_string_pretty(&findings::to_json(&found))?),
-                ReportFormat::Sarif => println!("{}", serde_json::to_string_pretty(&findings::to_sarif(&found))?),
+                ReportFormat::Text => print!("{}", findings::to_text_with(&found, &stored)),
+                ReportFormat::Json => println!("{}", serde_json::to_string_pretty(&findings::to_json_with(&found, &stored))?),
+                ReportFormat::Sarif => println!("{}", serde_json::to_string_pretty(&findings::to_sarif_with(&found, &stored))?),
             }
             if p.failed {
                 std::process::exit(2);
@@ -464,7 +814,7 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Deps { path, format, level, external } => {
-            let p = load(&path)?;
+            let p = load(&path, cache, None)?;
             summary(&p);
             let files = p.dep_files();
             let mut graph = deps::build(&files);
@@ -475,7 +825,7 @@ fn main() -> Result<()> {
             p.exit_if_failed();
         }
         Cmd::Flow { path, format, from, function, control } => {
-            let p = load(&path)?;
+            let p = load(&path, cache, None)?;
             summary(&p);
             // CFGs retain their source so the CPG view also works for in-memory projects.
             let sources = p.cpg_sources()?;
@@ -488,7 +838,7 @@ fn main() -> Result<()> {
             p.exit_if_failed();
         }
         Cmd::Cpg { path, format, edges, function, out } => {
-            let p = load(&path)?;
+            let p = load(&path, cache, None)?;
             summary(&p);
             // The syntax trees are built from the sources retained by the CFGs.
             let sources = p.cpg_sources()?;
@@ -511,7 +861,7 @@ fn main() -> Result<()> {
             p.exit_if_failed();
         }
         Cmd::Calls { path, format, external } => {
-            let p = load(&path)?;
+            let p = load(&path, cache, None)?;
             summary(&p);
             // imports decide between same-named functions
             let dep_files = p.dep_files();
