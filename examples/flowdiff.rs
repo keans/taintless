@@ -32,7 +32,7 @@ fn main() {
         loaded.push((p, lang, src, cfgs, imps));
     }
     let pf: Vec<ProjectFile> = loaded.iter().map(|l| ProjectFile { lang: l.1, file: &l.0, cfgs: &l.3, imports: &l.4 }).collect();
-    let old = dataflow::build(&pf, control);
+    let old = dataflow::build(&pf, control).unwrap();
     let sf: Vec<SourceFile> = loaded.iter().map(|l| SourceFile { path: &l.0, lang: l.1, src: &l.2, cfgs: &l.3, imports: &l.4 }).collect();
     let cpg = Cpg::build(&sf).unwrap();
     let new = flow_graph(&cpg, &sf, control);

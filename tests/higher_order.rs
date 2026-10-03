@@ -68,7 +68,7 @@ fn dataflow_links_registries_and_other_objects() {
     ] {
         let cfgs = lang::build_cfgs(lang, src).unwrap();
         let files = [analysis::ProjectFile { lang, file: Path::new("example"), cfgs: &cfgs, imports: &[] }];
-        let graph = analysis::dataflow::build(&files, false);
+        let graph = analysis::dataflow::build(&files, false).unwrap();
         let reachable = graph.slice_from("user");
         assert!(reachable.iter().any(|&n| graph.graph[n].var == "x" && matches!(graph.functions[graph.graph[n].func].name.as_str(), "sink" | "Worker.handler")), "{src}");
     }
@@ -104,7 +104,7 @@ fn callable_containers_cross_file_boundaries() {
     }).collect();
     let found = analysis::check_project(&project, &|| {});
     assert!(found.iter().any(|f| f.rule == "command-injection" && f.file == Path::new("helper.py")));
-    let graph = analysis::dataflow::build(&project, false);
+    let graph = analysis::dataflow::build(&project, false).unwrap();
     assert!(graph.slice_from("input").iter().any(|&n| graph.graph[n].var == "value" && graph.functions[graph.graph[n].func].name == "sink"));
 }
 

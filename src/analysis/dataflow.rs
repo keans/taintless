@@ -3,6 +3,7 @@
 //! module owns the public result types and the source-based builder.
 
 use super::ProjectFile;
+use anyhow::{Context, Result};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -76,17 +77,20 @@ fn last_segment(path: &str) -> &str {
 
 /// Build the data-flow view from the original sources retained by each CFG.
 /// Files with no functions are read from disk so their imports remain in the CPG.
-pub fn build(files: &[ProjectFile], control: bool) -> DataFlow {
-    let sources: Vec<String> = files.iter().map(|f| {
-        f.cfgs.first().map(|c| c.source.to_string()).filter(|s| !s.is_empty())
-            .unwrap_or_else(|| std::fs::read_to_string(f.file)
-                .unwrap_or_else(|e| panic!("source for {} is unavailable: {e}", f.file.display())))
-    }).collect();
+pub fn build(files: &[ProjectFile], control: bool) -> Result<DataFlow> {
+    let sources: Vec<String> = files
+        .iter()
+        .map(|f| match f.cfgs.first().map(|c| c.source.as_ref()).filter(|s| !s.is_empty()) {
+            Some(source) => Ok(source.to_string()),
+            None => std::fs::read_to_string(f.file)
+                .with_context(|| format!("reading source for {}", f.file.display())),
+        })
+        .collect::<Result<_>>()?;
     let inputs: Vec<crate::cpg::SourceFile> = files.iter().zip(&sources).map(|(f, src)| crate::cpg::SourceFile {
         path: f.file, lang: f.lang, src, cfgs: f.cfgs, imports: f.imports,
     }).collect();
-    let cpg = crate::cpg::Cpg::build(&inputs).expect("CFG sources must build a CPG");
-    crate::cpg::flow::flow_graph(&cpg, &inputs, control)
+    let cpg = crate::cpg::Cpg::build(&inputs)?;
+    Ok(crate::cpg::flow::flow_graph(&cpg, &inputs, control))
 }
 
 impl DataFlow {

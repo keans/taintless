@@ -229,6 +229,18 @@ impl Pipeline {
     fn dep_files(&self) -> Vec<deps::DepFile<'_>> {
         self.ok.iter().map(|l| deps::DepFile { path: &l.file, lang: l.lang, imports: l.imports.clone(), cfgs: &l.cfgs }).collect()
     }
+
+    fn cpg_sources(&self) -> std::io::Result<Vec<String>> {
+        self.ok.iter().map(source_of).collect()
+    }
+
+    fn cpg_files<'a>(&'a self, sources: &'a [String]) -> Vec<taintless::cpg::SourceFile<'a>> {
+        self.ok
+            .iter()
+            .zip(sources)
+            .map(|(l, src)| taintless::cpg::SourceFile { path: &l.file, lang: l.lang, src, cfgs: &l.cfgs, imports: &l.imports })
+            .collect()
+    }
 }
 
 /// Parse one already-read file into CFGs.
@@ -466,13 +478,8 @@ fn main() -> Result<()> {
             let p = load(&path)?;
             summary(&p);
             // CFGs retain their source so the CPG view also works for in-memory projects.
-            let sources: Vec<String> = p.ok.iter().map(source_of).collect::<std::io::Result<_>>()?;
-            let files: Vec<taintless::cpg::SourceFile> = p
-                .ok
-                .iter()
-                .zip(&sources)
-                .map(|(l, src)| taintless::cpg::SourceFile { path: &l.file, lang: l.lang, src, cfgs: &l.cfgs, imports: &l.imports })
-                .collect();
+            let sources = p.cpg_sources()?;
+            let files = p.cpg_files(&sources);
             let cpg = taintless::cpg::Cpg::build(&files)?;
             let df = taintless::cpg::flow::flow_graph(&cpg, &files, control);
             let keep = from.as_deref().map(|name| df.slice_from(name));
@@ -484,13 +491,8 @@ fn main() -> Result<()> {
             let p = load(&path)?;
             summary(&p);
             // The syntax trees are built from the sources retained by the CFGs.
-            let sources: Vec<String> = p.ok.iter().map(source_of).collect::<std::io::Result<_>>()?;
-            let files: Vec<taintless::cpg::SourceFile> = p
-                .ok
-                .iter()
-                .zip(&sources)
-                .map(|(l, src)| taintless::cpg::SourceFile { path: &l.file, lang: l.lang, src, cfgs: &l.cfgs, imports: &l.imports })
-                .collect();
+            let sources = p.cpg_sources()?;
+            let files = p.cpg_files(&sources);
             let cpg = taintless::cpg::Cpg::build(&files)?;
             let sel = cpg_export::select(&cpg, &edges, function.as_deref());
             match format {

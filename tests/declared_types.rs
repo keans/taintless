@@ -58,10 +58,23 @@ fn declared_locals_and_fields_drive_all_three_analyses() {
         let found = analysis::check_file(lang, path, &cfgs);
         assert!(found.iter().any(|f| f.function == sink && f.rule == "command-injection"), "{lang:?}: {found:?}");
         let project = [analysis::ProjectFile { lang, file: path, cfgs: &cfgs, imports: &[] }];
-        let df = analysis::dataflow::build(&project, false);
+        let df = analysis::dataflow::build(&project, false).unwrap();
         let sink_params: Vec<_> = df.graph.node_indices().filter(|&n| df.functions[df.graph[n].func].name == sink && df.graph[n].var == "x").collect();
         assert!(sink_params.iter().any(|&n| df.graph.neighbors_directed(n, petgraph::Direction::Incoming).next().is_some()), "{lang:?}");
     }
+}
+
+#[test]
+fn dataflow_builder_reports_missing_source() {
+    let file = Path::new("missing-dataflow-source.py");
+    let project = [analysis::ProjectFile {
+        lang: Language::Python,
+        file,
+        cfgs: &[],
+        imports: &[],
+    }];
+    let error = analysis::dataflow::build(&project, false).err().unwrap();
+    assert!(error.to_string().contains("missing-dataflow-source.py"));
 }
 
 #[test]
