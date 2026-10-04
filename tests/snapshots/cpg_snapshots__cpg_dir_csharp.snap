@@ -1,0 +1,9 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 14, "binary_op": 3, "call": 32, "control": 4, "field": 1, "field_access": 28, "file": 1, "identifier": 129, "literal": 10, "local": 13, "method": 9, "method_return": 9, "other": 198, "param": 5, "return": 4, "type": 3, "type_decl": 1}
+edges: {"argument": 26, "ast": 437, "call": 3, "cdg": 38, "cfg": 52, "contains": 35, "param_in": 3, "reaching": 32, "receiver": 24, "ref": 44, "return_out": 3, "scope": 10, "type_of": 14}
+call UserController.Local -> UserController.Clean
+call UserController.Local -> UserController.Local.Wrap
+call UserController.Local -> UserController.Local.f

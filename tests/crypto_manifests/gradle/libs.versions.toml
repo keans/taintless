@@ -1,0 +1,8 @@
+[versions]
+bc = "1.78"
+
+[libraries]
+bouncy = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bc" }
+tink = "com.google.crypto.tink:tink:1.12.0"
+jjwt = { group = "io.jsonwebtoken", name = "jjwt-api", version = "0.12.5" }
+junit = "junit:junit:4.13"

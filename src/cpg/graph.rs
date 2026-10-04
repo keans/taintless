@@ -67,6 +67,17 @@ pub struct SourceFile<'a> {
     pub imports: &'a [Import],
 }
 
+/// What a call says about its arguments beyond their order.
+#[derive(Debug, Clone, Default)]
+pub struct CallMeta {
+    /// The keyword name of each argument (`None`: positional).
+    pub arg_names: Vec<Option<String>>,
+    /// The properties of object / dictionary / struct literals among the arguments: name and value node.
+    pub props: Vec<(String, NodeIndex)>,
+    /// The position of the argument each of `props` belongs to.
+    pub prop_args: Vec<usize>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Node {
     /// Index into [`Cpg::files`].
@@ -208,6 +219,10 @@ pub struct Cpg {
     pub(crate) links: Vec<CallLink>,
     /// Aliases each function establishes (`b` -> `a`), same order as `methods`.
     aliases: Vec<HashMap<String, String>>,
+    /// Keyword names and literal properties of calls, for the calls that have any.
+    pub(crate) call_meta: HashMap<NodeIndex, CallMeta>,
+    /// What each file's imports call things (`import os as o`), by file index.
+    pub(crate) bindings: Vec<Option<crate::analysis::crypto::Bindings>>,
     /// The expression of each element of a list literal a statement assigns: `xs = [a, b]`
     /// defines `xs[0]` from `a` and `xs[1]` from `b`, keyed by `(statement, "xs[0]")`.
     elem_values: HashMap<(NodeIndex, String), NodeIndex>,
@@ -250,11 +265,14 @@ impl Cpg {
             stmt_nodes: vec![],
             links: vec![],
             aliases: vec![],
+            call_meta: HashMap::new(),
+            bindings: vec![],
             elem_values: HashMap::new(),
             calls: callgraph::CallGraph { graph: Default::default(), external: HashMap::new() },
             deps: deps::DepGraph { graph: Default::default(), external: Default::default() },
         };
         let mut seen = EdgeSet::new();
+        cpg.bindings = files.iter().map(|f| crate::analysis::crypto::file_bindings(f.lang, f.path, f.imports, f.cfgs)).collect();
         for (fi, f) in files.iter().enumerate() {
             cpg.add_ast(fi, f.path, f.lang, build_ast(f.lang, fi as u32, f.src)?);
         }
@@ -319,6 +337,10 @@ impl Cpg {
             }
             if let Some(r) = n.receiver {
                 self.graph.add_edge(nodes[i], nodes[r], Edge { kind: EdgeKind::Receiver, label: None, var: None, order: 0 });
+            }
+            if n.arg_names.iter().any(Option::is_some) || !n.props.is_empty() {
+                let props = n.props.iter().map(|(k, v)| (k.clone(), nodes[*v])).collect();
+                self.call_meta.insert(nodes[i], CallMeta { arg_names: n.arg_names.clone(), props, prop_args: n.prop_args.clone() });
             }
             if n.kind == NodeKind::Method {
                 let mut up = n.parent;

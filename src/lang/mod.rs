@@ -1,8 +1,10 @@
 pub mod c;
 pub mod common;
+pub mod csharp;
 pub mod go;
 pub mod java;
 pub mod js;
+pub mod kotlin;
 pub mod python;
 pub mod rust;
 
@@ -21,19 +23,27 @@ pub enum Language {
     Java,
     C,
     Cpp,
+    CSharp,
+    Kotlin,
 }
 
 impl Language {
+    /// Does a literal's key `name` read as `.name` (JS, TS, Go) rather than `['name']`?
+    pub fn dot_keys(self) -> bool {
+        matches!(self, Self::JavaScript | Self::TypeScript | Self::Tsx | Self::Go)
+    }
+
     /// Languages that can call / import each other's code (TypeScript with
-    /// JavaScript, C with C++); everything else is a separate world.
+    /// JavaScript, C with C++, Kotlin with Java); everything else is a separate world.
     pub fn family(self) -> u8 {
         match self {
             Self::Python => 0,
             Self::JavaScript | Self::TypeScript | Self::Tsx => 1,
             Self::Rust => 2,
             Self::Go => 3,
-            Self::Java => 4,
+            Self::Java | Self::Kotlin => 4,
             Self::C | Self::Cpp => 5,
+            Self::CSharp => 6,
         }
     }
 
@@ -58,6 +68,8 @@ impl Language {
             "java" => Self::Java,
             "c" => Self::C,
             "cpp" | "c++" => Self::Cpp,
+            "csharp" | "c#" | "cs" => Self::CSharp,
+            "kotlin" | "kt" => Self::Kotlin,
             _ => return None,
         })
     }
@@ -73,6 +85,8 @@ impl Language {
             "java" => Self::Java,
             "c" | "h" => Self::C,
             "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Self::Cpp,
+            "cs" => Self::CSharp,
+            "kt" | "kts" => Self::Kotlin,
             _ => return None,
         })
     }
@@ -91,6 +105,8 @@ macro_rules! with_grammar {
             Language::Java => { let ($spec, $g) = (&java::Java, tree_sitter_java::LANGUAGE.into()); $body }
             Language::C => { let ($spec, $g) = (&c::CLike, tree_sitter_c::LANGUAGE.into()); $body }
             Language::Cpp => { let ($spec, $g) = (&c::CLike, tree_sitter_cpp::LANGUAGE.into()); $body }
+            Language::CSharp => { let ($spec, $g) = (&csharp::CSharp, tree_sitter_c_sharp::LANGUAGE.into()); $body }
+            Language::Kotlin => { let ($spec, $g) = (&kotlin::Kotlin, tree_sitter_kotlin_ng::LANGUAGE.into()); $body }
         }
     };
 }

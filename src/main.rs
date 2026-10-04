@@ -4,10 +4,11 @@ use ignore::WalkBuilder;
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use taintless::{
-    analysis::{self, Finding, Severity, baseline::Baseline, callgraph, config, deps, suppress},
+    analysis::{self, Finding, crypto, Severity, baseline::Baseline, callgraph, config, deps, suppress},
     export::{
         callgraph as cg_export,
         cpg as cpg_export,
+        crypto as crypto_export,
         dataflow as df_export,
         deps as deps_export,
         dot::to_dot_all,
@@ -59,6 +60,16 @@ enum CallFormat {
     Text,
     Dot,
     Json,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CryptoFormat {
+    Text,
+    Json,
+    /// CycloneDX 1.6 cryptographic bill of materials.
+    Cbom,
+    /// SARIF 2.1.0 results for weak algorithms and problems in the arguments.
+    Sarif,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -269,6 +280,25 @@ enum Cmd {
         /// Directory for the files of `--format neo4j`.
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+    /// List the crypto libraries a project imports and the crypto functions it calls.
+    Crypto {
+        path: PathBuf,
+        #[arg(long, value_enum, default_value = "text")]
+        format: CryptoFormat,
+        /// Only list weak algorithms and problems in the arguments (no libraries, no plain calls).
+        #[arg(long)]
+        only_weak: bool,
+        /// Exit with status 1 when a weak algorithm or a problem in the arguments is found.
+        #[arg(long)]
+        fail_on_weak: bool,
+        /// Only list weak algorithms and problems of at least this severity (implies `--only-weak`).
+        #[arg(long, value_enum)]
+        min_severity: Option<MinSeverity>,
+        /// Project configuration whose `[crypto]` tables extend the built-in ones (default: `.taintless.toml`
+        /// next to the scanned path or in the working directory).
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
     /// Show which function calls which.
     Calls {
@@ -559,7 +589,7 @@ fn default_cache(start: &Path) -> PathBuf {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let scanned = match &cli.cmd {
-        Cmd::Cfg { path, .. } | Cmd::Security { path, .. } | Cmd::Deps { path, .. } | Cmd::Flow { path, .. } | Cmd::Cpg { path, .. } | Cmd::Calls { path, .. } | Cmd::Index { path } => path.clone(),
+        Cmd::Cfg { path, .. } | Cmd::Security { path, .. } | Cmd::Deps { path, .. } | Cmd::Flow { path, .. } | Cmd::Cpg { path, .. } | Cmd::Calls { path, .. } | Cmd::Crypto { path, .. } | Cmd::Index { path } => path.clone(),
         _ => PathBuf::from("."),
     };
     let db_path = cli.cache.clone().unwrap_or_else(|| default_cache(&scanned));
@@ -859,6 +889,69 @@ fn main() -> Result<()> {
                 }
             }
             p.exit_if_failed();
+        }
+        Cmd::Crypto { path, format, only_weak, fail_on_weak, min_severity, config: config_path } => {
+            if let Some(file) = config_path.or_else(|| config::discover(&path)) {
+                let extra = match config::load(&file) {
+                    Ok(c) => c.crypto,
+                    Err(e) => {
+                        eprintln!("error: {e:#}");
+                        std::process::exit(2);
+                    }
+                };
+                if !extra.is_empty() {
+                    eprintln!("using crypto tables from {}", file.display());
+                    if let Err(e) = crypto::tables::install(extra) {
+                        eprintln!("error: {e}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            let p = load(&path, cache, None)?;
+            summary(&p);
+            let files: Vec<crypto::ScanFile> = p.ok.iter().map(|l| crypto::ScanFile { lang: l.lang, file: &l.file, imports: &l.imports, cfgs: &l.cfgs }).collect();
+            let mut uses = crypto::scan_project(&files);
+            // manifests, key material and settings: every readable file under the path
+            let mut declared = vec![];
+            let mut seen = std::collections::HashSet::new();
+            for e in WalkBuilder::new(&path).build().filter_map(Result::ok).filter(|e| e.file_type().is_some_and(|t| t.is_file())) {
+                if e.metadata().is_ok_and(|m| m.len() > 8 << 20) {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(e.path()) else { continue };
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    declared.extend(crypto::scan_manifest(e.path(), text));
+                }
+                // an included configuration file is reported once, wherever it is reached from
+                for u in crypto::scan_artifact(e.path(), &bytes) {
+                    if seen.insert((u.file.clone(), u.line, u.col, u.name.clone(), u.algorithm.clone())) {
+                        uses.push(u);
+                    }
+                }
+            }
+            let only_weak = only_weak || min_severity.is_some();
+            if let Some(min) = min_severity {
+                let min = Severity::from(min);
+                uses.retain(|u| u.severity().is_some_and(|s| s >= min));
+            }
+            let flagged = uses.iter().any(crypto::CryptoUse::flagged);
+            if only_weak {
+                uses.retain(crypto::CryptoUse::flagged);
+            }
+            crypto::mark_used(&mut declared, &uses);
+            if only_weak {
+                declared.clear();
+            }
+            match format {
+                CryptoFormat::Text => print!("{}", crypto_export::to_text(&uses, &declared)),
+                CryptoFormat::Json => println!("{}", serde_json::to_string_pretty(&crypto_export::to_json(&uses, &declared))?),
+                CryptoFormat::Cbom => println!("{}", serde_json::to_string_pretty(&crypto_export::to_cbom(&uses, &declared))?),
+                CryptoFormat::Sarif => println!("{}", serde_json::to_string_pretty(&crypto_export::to_sarif(&uses))?),
+            }
+            p.exit_if_failed();
+            if fail_on_weak && flagged {
+                std::process::exit(1);
+            }
         }
         Cmd::Calls { path, format, external } => {
             let p = load(&path, cache, None)?;

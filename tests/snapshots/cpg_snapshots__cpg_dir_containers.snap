@@ -1,10 +1,9 @@
 ---
 source: tests/cpg_snapshots.rs
-assertion_line: 116
 expression: summary(&c)
 ---
 nodes: {"assign": 34, "call": 45, "control": 1, "field": 1, "field_access": 18, "file": 4, "identifier": 196, "literal": 27, "local": 34, "method": 39, "method_return": 41, "other": 334, "param": 17, "return": 1, "type": 3, "type_decl": 4}
-edges: {"argument": 14, "ast": 716, "call": 56, "cdg": 77, "cfg": 129, "contains": 118, "param_in": 2, "reaching": 85, "receiver": 15, "ref": 96, "return_out": 1, "scope": 43, "type_of": 3}
+edges: {"argument": 14, "ast": 716, "call": 56, "cdg": 77, "cfg": 129, "contains": 118, "param_in": 2, "reaching": 87, "receiver": 15, "ref": 96, "return_out": 1, "scope": 43, "type_of": 3}
 call Bus.__init__ -> start
 call Bus.emit -> start
 call appended -> start

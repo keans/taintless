@@ -1,0 +1,11 @@
+[[crypto.library]]
+lang = "python"
+module = "mycorp.crypto"
+name = "mycorp-crypto"
+
+[[crypto.call]]
+lang = "python"
+pattern = "mycorp.crypto.seal"
+primitive = "cipher"
+algorithm = "ROT13"
+weak = true

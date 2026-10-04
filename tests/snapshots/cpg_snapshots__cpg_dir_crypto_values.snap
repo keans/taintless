@@ -1,0 +1,8 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 20, "binary_op": 5, "call": 45, "field_access": 33, "file": 8, "identifier": 169, "literal": 70, "local": 16, "method": 9, "method_return": 13, "other": 332, "param": 7, "return": 2, "type": 1, "type_decl": 2}
+edges: {"argument": 72, "ast": 694, "call": 2, "cdg": 59, "cfg": 72, "contains": 39, "imports": 2, "reaching": 52, "receiver": 41, "ref": 70, "return_out": 2, "scope": 11, "type_of": 1}
+call run -> default_algorithm
+call run -> strong_algorithm

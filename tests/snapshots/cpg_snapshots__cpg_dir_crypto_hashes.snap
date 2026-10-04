@@ -1,0 +1,6 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"binary_op": 1, "call": 24, "field_access": 10, "file": 5, "identifier": 92, "literal": 56, "method": 5, "method_return": 5, "other": 126, "param": 5, "type": 2, "type_decl": 1}
+edges: {"argument": 74, "ast": 320, "cdg": 24, "cfg": 29, "contains": 12, "reaching": 13, "receiver": 13, "ref": 14, "scope": 6, "type_of": 3}

@@ -1,0 +1,6 @@
+[packages]
+bcrypt = "*"
+flask = "*"
+
+[dev-packages]
+pyjwt = "*"

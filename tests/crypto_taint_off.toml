@@ -1,0 +1,1 @@
+disable = ["crypto-algorithm-from-input", "crypto-key-from-input", "crypto-iv-from-input"]

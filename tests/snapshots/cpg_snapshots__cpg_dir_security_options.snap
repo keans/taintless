@@ -1,0 +1,18 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 17, "binary_op": 1, "call": 29, "field": 2, "field_access": 50, "file": 2, "identifier": 144, "literal": 7, "local": 10, "method": 25, "method_return": 27, "other": 215, "param": 61, "return": 24, "type_decl": 1}
+edges: {"argument": 69, "ast": 574, "call": 12, "cdg": 43, "cfg": 71, "contains": 64, "param_in": 22, "reaching": 141, "receiver": 15, "ref": 107, "return_out": 12, "scope": 26}
+call by_key_clean -> build_clean
+call by_key_direct -> build_by_key
+call passed_clean -> verifyClean
+call passed_literal -> verifyLiteral
+call passed_on -> verifyChain
+call passed_on_literal -> passed_on
+call passed_variable -> verifyVariable
+call reassigned_direct -> build_reassigned
+call returned_clean -> build_clean
+call returned_clean -> build_clean
+call returned_direct -> build
+call returned_variable -> build

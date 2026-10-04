@@ -49,6 +49,11 @@ pub struct CallFlow {
     pub args: Vec<Flow>,
     /// Keyword names parallel to `args` (`None` = positional; may be shorter).
     pub arg_names: Vec<Option<String>>,
+    /// The properties of object / dictionary / struct literals among the arguments, by name
+    /// (`{ algorithm: x }`, `{"key": k}`, `&tls.Config{MinVersion: v}`): `(name, value)`. The
+    /// literal is also one of `args`, joined; this says which property holds what.
+    #[serde(default)]
+    pub props: Vec<(String, Flow)>,
     pub line: usize,
     pub col: usize,
 }
@@ -88,13 +93,17 @@ pub struct Stmt {
     pub calls: Vec<CallFlow>,
     /// For `return v` (and implicit returns): what the returned value depends on.
     pub ret: Option<Flow>,
+    /// For a `return` of an object / dictionary literal: what each property holds (`return {
+    /// algorithms: [x] }`), by name. `ret` is the literal joined.
+    #[serde(default)]
+    pub ret_props: Vec<(String, Flow)>,
     /// For a branch on a condition: what the condition depends on.
     pub cond: Option<Flow>,
 }
 
 impl Stmt {
     pub fn new(kind: StmtKind, line: usize, col: usize, text: String) -> Self {
-        Self { kind, line, col, text, span: (0, 0), node_kind: 0, assigns: vec![], elems: vec![], calls: vec![], ret: None, cond: None }
+        Self { kind, line, col, text, span: (0, 0), node_kind: 0, assigns: vec![], elems: vec![], calls: vec![], ret: None, ret_props: vec![], cond: None }
     }
 }
 

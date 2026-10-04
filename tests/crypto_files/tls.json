@@ -1,0 +1,5 @@
+{
+  "server": { "ssl_protocols": "TLSv1.1 TLSv1.2", "port": 443 },
+  "integrity": "sha1-abcdef",
+  "algorithm": "HS256"
+}

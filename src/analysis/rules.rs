@@ -14,6 +14,8 @@ pub enum ArgSel {
     Any,
     /// Only the n-th argument (0-based): the query of `execute(query, params)`.
     At(usize),
+    /// Only the argument passed by this keyword (`hashlib.new(name=x)`).
+    Named(&'static str),
 }
 
 #[derive(Clone, Copy)]
@@ -107,7 +109,7 @@ pub const MUTATORS: &[&str] = &[
 /// program, so they do not make a path, URL, redirect or page "untrusted"
 /// (they still matter for commands and memory errors).
 pub fn ignores_env_sources(rule_id: &str) -> bool {
-    matches!(rule_id, "path-traversal" | "ssrf" | "open-redirect" | "xss")
+    matches!(rule_id, "path-traversal" | "ssrf" | "open-redirect" | "xss" | "crypto-algorithm-from-input" | "crypto-key-from-input" | "crypto-iv-from-input")
 }
 
 /// Whether a source description names an environment-like origin.
@@ -213,16 +215,17 @@ fn builtin(lang: Language) -> &'static RuleSet {
     match lang {
         Language::Python => &PYTHON,
         Language::JavaScript | Language::TypeScript | Language::Tsx => &JAVASCRIPT,
-        Language::Java => &JAVA,
+        Language::Java | Language::Kotlin => &JAVA,
         Language::Go => &GO,
         Language::Rust => &RUST,
         Language::C | Language::Cpp => &C_FAMILY,
+        Language::CSharp => &CSHARP,
     }
 }
 
 /// Every built-in rule of every language (prototypes for configured sinks).
 pub fn all_rules() -> impl Iterator<Item = &'static CallRule> {
-    [&PYTHON, &JAVASCRIPT, &JAVA, &GO, &RUST, &C_FAMILY].into_iter().flat_map(|r| r.rules.iter())
+    [&PYTHON, &JAVASCRIPT, &JAVA, &GO, &RUST, &C_FAMILY, &CSHARP].into_iter().flat_map(|r| r.rules.iter())
 }
 
 /// The rules for `lang`: the built-in ones plus those from the installed configuration.
@@ -230,10 +233,53 @@ pub fn rules_for(lang: Language) -> &'static RuleSet {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static MERGED: OnceLock<Mutex<HashMap<u8, &'static RuleSet>>> = OnceLock::new();
-    let base = builtin(lang);
+    let base = with_crypto(builtin(lang), lang.family());
     let Some(active) = super::config::installed() else { return base };
     let mut cache = MERGED.get_or_init(Default::default).lock().expect("rules cache");
     cache.entry(lang.family()).or_insert_with(|| super::config::extend(base, lang.family(), &active.config))
+}
+
+/// `base` plus the sinks of the crypto tables: untrusted data as the algorithm, key or IV of a
+/// crypto call. Built once per language family, after the crypto tables are final.
+/// Keyword names under which a key or an IV is passed (`AES.new(key=k, iv=v)`).
+static KEY_WORDS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| vec!["key".to_string()]);
+static IV_WORDS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| vec!["iv".to_string(), "nonce".to_string()]);
+
+fn with_crypto(base: &'static RuleSet, fam: u8) -> &'static RuleSet {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use super::crypto::tables::active;
+    static CACHE: OnceLock<Mutex<HashMap<u8, &'static RuleSet>>> = OnceLock::new();
+    let mut cache = CACHE.get_or_init(Default::default).lock().expect("crypto rules cache");
+    cache.entry(fam).or_insert_with(|| {
+        let mut rules = base.rules.to_vec();
+        let t = active();
+        let mut sink = |pattern: &'static str, id: &'static str, cwe: &'static str, sev: Severity, msg: &'static str, index: Option<usize>, keywords: &'static [String]| {
+            let sel = |sel: ArgSel| CallRule { pattern, id, cwe, severity: sev, message: msg, mode: Mode::Tainted(sel), except: &[] };
+            rules.extend(index.map(|i| sel(ArgSel::At(i))));
+            rules.extend(keywords.iter().map(|k| sel(ArgSel::Named(k))));
+        };
+        for a in t.algorithm.iter().filter(|a| a.lang.family() == fam) {
+            sink(&a.pattern, "crypto-algorithm-from-input", "CWE-757", Medium, "cryptographic algorithm chosen from untrusted input", a.index, &a.keywords);
+        }
+        for s in t.secret.iter().filter(|s| s.lang.family() == fam) {
+            for arg in &s.args {
+                match arg.role.as_str() {
+                    "key" => sink(&s.pattern, "crypto-key-from-input", "CWE-320", Low, "cryptographic key taken from untrusted input", Some(arg.index), &KEY_WORDS),
+                    "iv" => sink(&s.pattern, "crypto-iv-from-input", "CWE-329", Medium, "IV or nonce taken from untrusted input", Some(arg.index), &IV_WORDS),
+                    _ => {}
+                }
+            }
+        }
+        Box::leak(Box::new(RuleSet {
+            entries: base.entries,
+            rules: Box::leak(rules.into_boxed_slice()),
+            source_calls: base.source_calls,
+            source_paths: base.source_paths,
+            sanitizers: base.sanitizers,
+            source_notes: base.source_notes,
+        }))
+    })
 }
 
 /// Rule id -> (title, CWE) for reports.
@@ -247,6 +293,9 @@ pub const RULE_INFO: &[(&str, &str, &str)] = &[
     ("xss", "Cross-site scripting", "CWE-79"),
     ("insecure-deserialization", "Insecure deserialization", "CWE-502"),
     ("weak-crypto", "Weak cryptographic algorithm", "CWE-327"),
+    ("crypto-algorithm-from-input", "Cryptographic algorithm chosen by untrusted input", "CWE-757"),
+    ("crypto-key-from-input", "Cryptographic key taken from untrusted input", "CWE-320"),
+    ("crypto-iv-from-input", "IV or nonce taken from untrusted input", "CWE-329"),
     ("unsafe-function", "Use of an unsafe function", "CWE-676"),
     ("format-string", "Format string vulnerability", "CWE-134"),
     ("insecure-temp-file", "Insecure temporary file", "CWE-377"),
@@ -392,6 +441,100 @@ static JAVASCRIPT: RuleSet = RuleSet {
     ],
 };
 
+static CSHARP: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[Entry { pattern: "Main", params: &["args"] }],
+    rules: &[
+        cmd("Process.Start"),
+        cmd("ProcessStartInfo"),
+        sql("SqlCommand").at(0),
+        sql("SqlDataAdapter").at(0),
+        sql("OracleCommand").at(0),
+        sql("MySqlCommand").at(0),
+        sql("NpgsqlCommand").at(0),
+        sql("SqliteCommand").at(0),
+        sql("OleDbCommand").at(0),
+        sql("OdbcCommand").at(0),
+        sql("*.ExecuteSqlRaw"),
+        sql("*.ExecuteSqlRawAsync"),
+        sql("*.ExecuteSqlCommand"),
+        sql("*.FromSqlRaw"),
+        sql("*.SqlQuery"),
+        path("File.ReadAllText"),
+        path("File.ReadAllBytes"),
+        path("File.ReadAllLines"),
+        path("File.ReadLines"),
+        path("File.WriteAllText"),
+        path("File.WriteAllBytes"),
+        path("File.WriteAllLines"),
+        path("File.AppendAllText"),
+        path("File.OpenRead"),
+        path("File.OpenWrite"),
+        path("File.Open"),
+        path("File.Delete"),
+        path("File.Copy"),
+        path("File.Move"),
+        path("File.Create"),
+        path("Directory.GetFiles"),
+        path("Directory.Delete"),
+        path("Directory.CreateDirectory"),
+        path("FileStream"),
+        path("StreamReader"),
+        path("StreamWriter"),
+        path("*.PhysicalFile"),
+        ssrf("*.GetAsync"),
+        ssrf("*.GetStringAsync"),
+        ssrf("*.GetStreamAsync"),
+        ssrf("*.GetByteArrayAsync"),
+        ssrf("*.PostAsync"),
+        ssrf("*.DownloadString"),
+        ssrf("*.DownloadFile"),
+        ssrf("*.DownloadData"),
+        ssrf("WebRequest.Create"),
+        ssrf("HttpWebRequest.Create"),
+        redirect("*.Redirect"),
+        redirect("*.RedirectPermanent"),
+        redirect("Response.Redirect"),
+        xss("Response.Write"),
+        xss("Response.WriteAsync"),
+        xss("*.Html.Raw"),
+        xss("HtmlString"),
+        deser("BinaryFormatter"),
+        deser("NetDataContractSerializer"),
+        deser("SoapFormatter"),
+        deser("LosFormatter"),
+        deser("ObjectStateFormatter"),
+        code("CSharpScript.EvaluateAsync"),
+        code("CSharpScript.RunAsync"),
+        tainted("Type.GetType", "code-injection", "CWE-470", Medium, "type loaded by untrusted name").at(0),
+        tainted("Assembly.Load", "code-injection", "CWE-470", Medium, "assembly loaded by untrusted name").at(0),
+        tainted("Assembly.LoadFrom", "code-injection", "CWE-470", Medium, "assembly loaded from an untrusted path").at(0),
+        weak_hash("MD5.Create"),
+        weak_hash("SHA1.Create"),
+        weak_hash("MD5CryptoServiceProvider"),
+        weak_hash("SHA1CryptoServiceProvider"),
+        weak_hash("SHA1Managed"),
+        weak_hash("MD5Cng"),
+    ],
+    source_calls: &[
+        "Console.ReadLine", "Console.In.ReadLine", "Console.ReadKey", "Environment.GetEnvironmentVariable",
+        "Environment.GetCommandLineArgs", "*.GetQueryString", "Request.QueryString.Get", "Request.Form.Get",
+        "Request.Headers.Get", "Request.Query.TryGetValue",
+    ],
+    source_paths: &[
+        "Request.Query", "Request.QueryString", "Request.Form", "Request.Headers", "Request.Cookies",
+        "Request.Params", "Request.Path", "Request.PathInfo", "Request.RawUrl", "Request.Url", "Request.Body",
+        "HttpContext.Request.Query", "HttpContext.Request.Form", "HttpContext.Request.Headers",
+        "HttpContext.Request.Cookies", "context.Request.Query", "context.Request.Form",
+    ],
+    sanitizers: &[
+        "int.Parse", "int.TryParse", "Int32.Parse", "Int32.TryParse", "long.Parse", "Int64.Parse", "Convert.ToInt32",
+        "Convert.ToInt64", "Guid.Parse", "Guid.TryParse", "Path.GetFileName", "HttpUtility.HtmlEncode",
+        "WebUtility.HtmlEncode", "HtmlEncoder.Default.Encode", "Uri.EscapeDataString", "Regex.Escape",
+        "AntiXssEncoder.HtmlEncode", "HttpUtility.UrlEncode", "WebUtility.UrlEncode",
+    ],
+};
+
 static JAVA: RuleSet = RuleSet {
     source_notes: &[],
     entries: &[Entry { pattern: "main", params: &["args"] }],
@@ -431,6 +574,8 @@ static JAVA: RuleSet = RuleSet {
     source_calls: &[
         "System.getenv", "System.getProperty", "*.getParameter", "*.getParameterValues", "*.getHeader",
         "*.getQueryString", "*.getCookies", "*.readLine", "*.nextLine", "*.getInputStream",
+        // Kotlin
+        "readLine", "readln", "readlnOrNull", "System.`in`.bufferedReader.readLine",
     ],
     source_paths: &[],
     sanitizers: &[

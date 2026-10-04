@@ -57,11 +57,45 @@ answers "may", so it errs on one side on purpose.
   dependency injection by configuration, decorators that rewrite functions,
   dynamically computed imports.
 
-- **Eight languages only**
+- **Ten languages only**
   **Kind:** by design
-  **Consequence:** Python, JavaScript, TypeScript/TSX, Rust, Go, Java, C, C++.
+  **Consequence:** Python, JavaScript, TypeScript/TSX, Rust, Go, Java, Kotlin,
+  C#, C, C++.
   Files with other extensions are skipped. Dependencies never cross language
   families (a Python call is never linked to a Rust function).
+
+- **C# is modeled like Java**
+  **Kind:** approximation
+  **Consequence:** Methods, constructors, destructors, operators, local
+  functions, lambdas, anonymous methods and property accessors (`Prop.get`,
+  `Prop.set`) are functions; top-level statements form a `<module>` function.
+  `using` directives, `using Alias = ...` and `using static` are imports.
+  `async` / `await`, `yield`, LINQ, pattern-matching declarations (`is T x`),
+  records' primary constructors, extension methods, partial classes spread
+  over files and `dynamic` are not modeled beyond their syntax: an awaited
+  call is a call, a pattern variable is not a binding, an extension method is
+  matched by its name only. ASP.NET action parameters are not sources unless
+  configured (`[[entry]]`); `Request.QueryString`, `Request.Form`,
+  `Request.Query`, `Request.Headers`, `Console.ReadLine` and the environment
+  are. A `using` namespace is matched to files by path suffix only (a
+  namespace need not mirror the directory layout), so `deps` lists most
+  project namespaces as external.
+
+- **Kotlin is modeled like Java**
+  **Kind:** approximation
+  **Consequence:** Kotlin and Java are one family: they call each other and
+  share the rule tables and the crypto tables (`lang = "java"`). Functions,
+  secondary constructors, `init` blocks, lambdas (an implicit `it` is a
+  parameter), anonymous functions and property accessors (`Prop.get`) are
+  functions; `if`, `when`, `try`, `for`, `while` and `do` are control flow,
+  also as expressions. Coroutines (`suspend`, `launch`, `async`), scope
+  functions (`let`, `apply`, `also`, `run`: their lambdas are arguments of a
+  library call, so data does not flow through them), extension functions,
+  delegated properties (`by lazy`), operator overloading, destructuring
+  beyond the declaration itself, string templates (`"$x"` joins its parts) and
+  callable references (`::sink`) are not modeled beyond their syntax. The
+  Kotlin grammar (`tree-sitter-kotlin-ng`) names few fields, so the
+  front end relies on child order, which a grammar update may change.
 
 - **Incremental work is limited**
   **Kind:** gap
@@ -177,6 +211,12 @@ answers "may", so it errs on one side on purpose.
   (`src/analysis/rules.rs`), extendable with `.taintless.toml`. Anything not in
   a table or the config is invisible: custom framework request objects, ORMs,
   template engines, message queues, RPC layers.
+- Import aliases are resolved from the text of the import statement (`import
+  os as o`, `from os import system`, a renamed `require` member, an aliased Go
+  package, Rust `use .. as`, Java static imports). Relative Python imports,
+  nested Rust `use` groups and aliases created by assignment (`f = os.system`)
+  are not, except for the function references the call graph tracks. The CPG
+  taint query resolves them the same way.
 - Environment variables and system properties are sources for commands and
   memory errors, **not** for paths, URLs, redirects or pages (by design:
   whoever runs the program sets them).
@@ -246,7 +286,217 @@ answers "may", so it errs on one side on purpose.
 - A stored graph is rebuilt as a whole when the project changes. Queries over
   the stored graph are approximate; `query reach` does not model sanitizers.
 
-## 8. Findings workflow
+## 8. Crypto inventory (`crypto`)
+
+- **An inventory, not a proof.** It lists what the code says it uses, matched
+  by name. It does not tell whether a primitive is used correctly as a whole
+  (key management, nonce reuse across calls, padding oracles, protocol
+  design), and a clean report does not mean the cryptography is sound. The
+  `weak-crypto` rule in `security` is a separate, smaller check.
+- **Name-based matching (by design).** Libraries, calls and secret-bearing
+  arguments come from tables (`src/analysis/crypto/tables.toml`). A library or
+  function that is not in them is not reported, and a project function named
+  like a crypto call (`MD5`, `sha256`) is reported unless the entry is scoped
+  to a library that the file must import. Add entries under `[[crypto.*]]` in
+  `.taintless.toml`.
+- **Languages (gap).** Only the languages the tool parses are scanned: Python,
+  JavaScript / TypeScript, Rust, Go, Java, Kotlin, C# and C / C++. PHP, Ruby
+  and Swift code is ignored (files are still checked for key material and
+  settings).
+- **Arguments are read from source text (approximation).** Literals are not
+  kept in the IR, so an argument is read from the text at the call. Only
+  literals, and a name with exactly one literal definition in the same file,
+  are understood. Values read from the environment, computed, built from
+  several parts are missed, and so are secrets set
+  through struct fields or JS object properties (`{ key: "..." }`); a number
+  inside an argument object, such as
+  `modulusLength: 1024`, is read. A name defined twice with different values
+  is treated as unknown. A name defined in another file is looked up only
+  when it is written like a constant (starts with an upper-case letter) and
+  every file of that language that defines it agrees; imports are not followed,
+  so an unrelated constant of the same name elsewhere makes it ambiguous.
+- **Hardcoded values are literal values.** `hardcoded key`, `static IV` and
+  `static salt` mean a literal reaches the argument. A key that is derived from
+  a constant, loaded from a file in the repository, or that the code only
+  *treats* as secret is not recognized, and test or example keys are reported
+  like real ones.
+- **Objects are followed by call graph and by name (approximation).** A
+  method on a crypto object is listed when the variable is assigned once in
+  the same function, or is a field assigned once in the same file, when the
+  method is called on the call's result, when a project function returns the
+  object, and when it is passed to a project function that calls methods on
+  that parameter. Which function a call reaches comes from the call graph, so
+  it has the call graph's limits (section 4: reflection, dynamic dispatch,
+  unknown receiver types); a call the graph does not resolve falls back to the
+  one project function with that simple name (four or more characters, unique
+  per language), which may match an unrelated library method of the same
+  name. When a call can reach several functions, the object is listed only if
+  they all return the same kind of object. Copies (`b = a`), list literals and
+  `append` / `add` / `put` of crypto objects, and loops over such a list are
+  followed. A list or dictionary of different kinds lists a method call on
+  one of its elements once per kind, unless the call names a literal key
+  (`d["fast"].encrypt()`), which gets the object stored under that key (in the
+  literal or by `d["k"] = ...`). A variable assigned in several places gets,
+  at each call, the kinds of the assignments that reach it (branches and loops
+  included, by the control-flow graph). Not followed: objects stored under
+  computed keys or in a map read with `get`, objects returned conditionally
+  from a function, a reassigned object passed to a function (the parameter
+  is judged by the one kind a caller passes, if any), and a parameter passed
+  on beyond three calls.
+- **Values are read from text (approximation).** A constant defined as
+  another constant is followed three hops; a parameter takes the literal all
+  its callers pass (at most six callers, found by the call graph). String
+  literals added together (`"MD" + "5"`) are joined, and a function whose
+  returns are all the same literal (`def alg(): return "sha" + "1"`) gives it,
+  when it is defined in the same file. A part that is not a literal
+  (`"SHA-" + mode`) leaves the algorithm unresolved. A value returned by a
+  function of another file is read when every definition of that name in the
+  language agrees. Constants interpolated into a string (`f"sha{BITS}"`,
+  `` `md${LEVEL}` ``) and entries of a dictionary, list or object the file
+  defines (`ALGS["fast"]`, `ALGS.fast`, `ORDER[1]`) are filled in when they
+  resolve completely. Strings made by `%`, `.format`, `String.format`,
+  `fmt.Sprintf` and `string.Format` are formatted the same way when the
+  template is a literal and every value resolves (`%s` / `%d` / `{}` /
+  `{0}` / `{name}`, with flags, width and precision; no other
+  specifiers). A container filled key by key (`ALGS["k"] = "v"`,
+  `ORDER.append("v")`) or defined in another file counts when every
+  definition agrees and every stored value is a literal; a key stored with
+  different values has none. Function results that are not one literal are
+  not read.
+- **Aliases (approximation).** Import aliases are resolved from the text of
+  the import statement, nested Rust `use` groups included. The default import
+  of a library the tables know by another name (`import CJ from 'crypto-js'`)
+  resolves to that name for the libraries that have one in `tables.toml`
+  (`alias`), not for others. Relative Python imports are not resolved: they
+  name project code, which is matched by function name.
+- **Weakness is a list of known-bad names (approximation).** MD2/4/5, SHA-1,
+  DES / 3DES, RC2 / RC4, Blowfish, ECB, small RSA / DH keys, short curves,
+  old TLS versions, low PBKDF2 and bcrypt work factors. Weaker choices that are
+  not on the list pass, and the thresholds (2048 bits, 10000 iterations,
+  cost 10) are fixed. SHA-1 in an HMAC or as a non-security checksum is
+  reported like any other use.
+- **Non-cryptographic generators and hashes are hints.** `random.*`,
+  `Math.random`, `rand()` and friends are listed with `non-cryptographic PRNG`,
+  and xxHash, MurmurHash, CityHash, FarmHash, wyhash, HighwayHash, t1ha,
+  SpookyHash, MetroHash, FNV and CRC with `non-cryptographic hash`; whether the
+  value protects anything is not known. A constant seed is reported separately.
+  Argon2 memory is the only parameter checked, not time or parallelism: the
+  OWASP profiles trade them against each other (one pass with 46 MiB is as
+  accepted as two with 19 MiB), so no minimum for one alone is right. Memory is
+  read from a literal, a product or shift of literals (`8 * 1024`, `1 << 16`),
+  a constant of the file, libsodium's `MEMLIMIT_*` presets, and the
+  `memoryCost` of a JS options object written in the call or held in a variable
+  of the file.
+- **Quantum tags are by name.** `vulnerable` and `safe` come from algorithm
+  names (RSA, ECC, DH, DSA; ML-KEM, ML-DSA, SLH-DSA), not from the key sizes or
+  from how a protocol combines them (hybrid schemes are not recognized).
+- **Manifests and lock files.** A declared library is `[not imported]` when no
+  scanned file imports it, which is also true for code in an unsupported
+  language, in an ignored path, or loaded dynamically. Lock files give
+  transitive dependencies only by name: versions, features and which
+  dependency pulls in which are not read. Only the manifest formats listed in
+  the guide are read, by their text: a `setup.py` that builds its
+  requirements in code, Gradle build logic (`libs.<alias>` references are
+  resolved only through `libs.versions.toml`), a Maven parent POM outside the
+  scanned path, and Conan or CMake dependencies fetched by other means
+  (`FetchContent`, `pkg_check_modules`) are not seen.
+- **Files (approximation).** PEM blocks are found by their header followed by
+  key data. DER files are recognized by their extension (`.der`, `.crt`,
+  `.cer`, `.key`, `.p8`) and shape, one-line base64 only when it starts like a
+  DER sequence (`MI..`) and is at least 100 characters long, and JSON Web Keys
+  only in files that parse as JSON; a key in another encoding (a base64 body
+  split over lines in a config file, hex) is missed. Of a keystore only the
+  Java `.jks` and `.jceks` and BouncyCastle `.bks` formats are opened, for
+  the certificates they hold (a key entry through its certificate chain; the
+  keys are encrypted; a secret key entry ends the reading). The BKS layout
+  is read from the format description, not checked against files from
+  every version. A PKCS#12 file shows the certificates in bags that are not
+  encrypted, the algorithm that encrypts the rest (RC2-40, 3DES and RC4 are
+  flagged; PBES2 is not) and the MAC digest; what is encrypted stays
+  unread without the password. A `.jar` is read by its entry names (the
+  libraries its packages belong to and a few broken algorithm classes such as
+  `MD5Digest` and `DESEngine`) and by the algorithm names in its classes,
+  which are inflated (the first 400 classes of at most 1 MB, not those of
+  `org/bouncycastle`).
+  Encrypted keys are reported as keys without their size. The size is read for
+  RSA and DH parameters, EC keys (curve names only), Ed25519 / X25519 and
+  certificates (their public key and signature); other key types and
+  certificate chains beyond the first block are listed without details. The
+  ASN.1 reader is minimal and does not validate. Settings are read only when
+  the key (its whole path in nested formats) names `ssl`, `tls`, `cipher`,
+  `protocol`, `macs`, `kex` or `algorithm`; a `min_version` that nothing names
+  TLS is missed. Nesting is followed by indentation (YAML), by the brackets
+  of the whole document (JSON, any number of keys per line) and by section
+  headers. YAML flow collections (`tls: { min_version: 1.0 }`, over several
+  lines too) and anchors (`&tls`, `*tls`, `<<: *tls`) are read; a flow
+  collection inside a block list item or an anchor on a list is not.
+  `include` / `Include` / `IncludeOptional` read the named file, relative to
+  the including file, with `*` in the file name, three levels deep; the
+  findings are at the included file's own lines, and an include of a file
+  outside the scanned tree that does not exist here is skipped. Values spread
+  over several lines other than lists, backslash continuations and XML text
+  are missed, and XML attributes are read per line. Which of two conflicting
+  settings wins (Apache, `sshd_config` `Match` blocks) is not evaluated.
+- **Disabled verification is matched by spelling (approximation).** A fixed
+  list of settings is searched line by line in source and scripts. A check
+  turned off through a variable, a helper, another option name or a different
+  line is missed, and a test that disables verification on purpose is reported
+  like production code.
+- **Embedded implementations (approximation).** Recognized by a fixed set of
+  constants (the SHA family, MD5, SM3, Camellia, Blowfish, the AES and SM4
+  S-boxes, the Twofish, Serpent (two S-boxes), Whirlpool and RC2 tables, the
+  Threefish / Skein key schedule constant, the DES permutation, ChaCha).
+  Other algorithms are not found, and constants encoded in another way (signed
+  decimals, bytes in a string, compressed or obfuscated data) are missed. A
+  file with the constants of a hash may only contain a test vector. Binaries
+  are searched as raw bytes, and files over 4 MB are skipped.
+- **Compiled programs: tables where there are any (approximation).** The symbol
+  and dynamic tables and linked libraries of ELF and Mach-O files (fat
+  binaries: the first architecture) and the import table of a PE file are read,
+  so a name that only appears in a message is not an import. A file without a
+  readable table (a Java class, a file whose tables were removed, an unusual
+  layout) is searched by its printable strings instead, which can list a name
+  that is only text. Go packages are always found by string. PE imports by
+  ordinal are named by the exports of the DLL when that file is in the same
+  directory (else only the library is listed), delay-load imports are read, and
+  only the library names and the functions in the tables are listed. Rust
+  symbols (legacy `_ZN` and v0 `_R`) give the crates they mention (also those
+  of the type and trait of an `impl`, and of generic arguments), listed when
+  they are crypto crates, and the function when it is a type and method the
+  tables know (`<md5::Md5 as Digest>::update` is `Md5.update`); a function that
+  is only a name in a generic or closure is not matched. A name built at run
+  time and a packed binary are not seen. A Java class shows algorithm names but
+  not which call they reach, so a bare `AES` is listed without a verdict. Only
+  formats with a known magic number are read.
+- **Taint into crypto arguments is only as good as the tables and the
+  taint analysis.** The `crypto-*-from-input` rules cover the calls in the
+  `algorithm` and `secret` tables, by position, by keyword and by property of
+  an object, dictionary or Go struct literal argument (only top-level
+  properties with a literal name, up to three levels deep; a spread, a
+  computed key and a Rust struct literal are not seen). An options object
+  built in a variable (`opts = { algorithm: x }; f(opts)`) is followed, in
+  both analyses, when the literal is assigned in the same function. One
+  passed to another function (`verify(t, k, { algorithms: [x] })` where
+  `verify` hands its `opts` parameter to the sink, also through wrappers) or
+  returned by one (`jwt.verify(t, k, build(req))`, `o = build(req)`) is
+  followed property by property: another tainted property (`audience`) does
+  not make it a finding. The property may be written in a literal
+  (`return { algorithms: [x] }`), assigned key by key (`o.algorithms = x`),
+  held by a variable the callee reassigns, kept in a field of the class
+  (`this.opts = { algorithms: [x] }` in a constructor, used in another
+  method) or nested in a literal (`all = { jwt: { algorithms: [x] } }`,
+  passed as `all.jwt`). Keys written with a computed name, objects built in
+  a loop, and objects stored in a list or a map filled at run time are not
+  followed.
+  Untrusted data from the environment is ignored on purpose, and a key from
+  the request is only `low` because it is sometimes intended. They inherit the
+  limits of section 3.
+- **Not a source of truth for compliance.** The CycloneDX CBOM and SARIF
+  output carry what was found; they leave out fields a full CBOM has (key
+  lengths, curves, certificate details, protocol versions) and they are not
+  validated against a profile.
+
+## 9. Findings workflow
 
 - **Baseline.** Entries match on rule, file, function, message and a hash of
   the source line, in tiers, so renames, moves and both together are tolerated.
@@ -272,7 +522,7 @@ answers "may", so it errs on one side on purpose.
 - **Exit codes.** 0 clean, 1 findings, 2 incomplete (a file could not be read
   or parsed, or the configuration is invalid).
 
-## 9. Performance and scale
+## 10. Performance and scale
 
 - Analysis still holds the project in memory. The cache skips parsing of
   unchanged files and reuses security findings for an unchanged project; it
@@ -286,7 +536,7 @@ answers "may", so it errs on one side on purpose.
   `TAINTLESS_CORPUS` (no panic). The large corpora run so far were Go, Python,
   Rust and C++; Java, JavaScript/TypeScript and C are covered by fixtures only.
 
-## 10. How to treat the results
+## 11. How to treat the results
 
 - Treat every finding as a lead, and check the printed origin and call chain.
 - Expect misses in code that goes through frameworks, reflection, generated

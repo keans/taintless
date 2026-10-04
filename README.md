@@ -4,9 +4,9 @@
 move through a project, and where untrusted input may reach dangerous code. It
 works directly from source, without building or running the project.
 
-It supports Python, JavaScript, TypeScript, Rust, Go, Java, C, and C++. This is
-an experimental, AI-assisted proof of concept. Review security findings before
-acting on them.
+It supports Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C#, C, and
+C++. This is an experimental, AI-assisted proof of concept. Review security
+findings before acting on them.
 
 ## Install
 
@@ -29,12 +29,21 @@ taintless calls path/to/project
 taintless deps path/to/project --format text
 taintless cfg path/to/file.py --format text
 taintless cpg path/to/project > cpg.json
+taintless crypto path/to/project
 ```
 
 `security` reports possible unsafe flows and dangerous calls. `flow` traces
 values, `calls` and `deps` show relationships between functions and files,
-`cfg` shows control flow, and `cpg` exports the code property graph. Commands
-can emit text, JSON or graph formats where supported.
+`cfg` shows control flow, and `cpg` exports the code property graph. `crypto`
+inventories the cryptography in a project: the libraries imported or declared
+in manifests and lock files, the crypto calls with their algorithms, key
+material and TLS settings in files (PEM, DER, JWK, config files, keystores),
+and algorithms found in compiled programs. It flags weak algorithms, hardcoded
+keys and IVs, small keys, low work factors, committed private keys and
+disabled certificate checks, follows crypto objects through functions, and can
+write a CycloneDX CBOM or SARIF; `--fail-on-weak` makes it a CI gate.
+`security` also reports untrusted input that chooses an algorithm, key or IV.
+Commands can emit text, JSON or graph formats where supported.
 
 ## Cache and stored results
 
@@ -56,7 +65,8 @@ baselines, graph exports, triage and output formats.
 
 ## Documentation
 
-- [User guide](docs/guide.md): commands, findings and stored results.
+- [User guide](docs/guide.md): commands, findings, crypto inventory and
+  stored results.
 - [Known limitations](docs/limitations.md): precision and coverage.
 - [Design notes](docs/concept.md): architecture and extension points.
 - [Open work](TODO.md): remaining tasks.

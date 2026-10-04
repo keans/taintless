@@ -1,0 +1,1 @@
+{ "name": "demo", "dependencies": ["gnutls", { "name": "libgcrypt" }, "fmt"] }

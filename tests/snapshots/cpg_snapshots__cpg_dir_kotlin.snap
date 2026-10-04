@@ -1,0 +1,7 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 15, "binary_op": 3, "call": 43, "control": 2, "field": 1, "field_access": 35, "file": 1, "identifier": 156, "literal": 14, "local": 13, "method": 13, "method_return": 13, "other": 180, "return": 3, "type": 3, "type_decl": 2}
+edges: {"argument": 29, "ast": 466, "call": 1, "cdg": 41, "cfg": 62, "contains": 43, "param_in": 1, "reaching": 37, "receiver": 33, "ref": 34, "return_out": 1, "scope": 15, "type_of": 1}
+call UserHandler.lambdas -> UserHandler.lambdas.run

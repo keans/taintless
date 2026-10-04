@@ -1,0 +1,4 @@
+[[sink]]
+call = "myapp.lookup"
+rule = "sql-injection"
+keyword = "q"

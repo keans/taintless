@@ -32,6 +32,13 @@ pub struct AstNode {
     pub name: Option<String>,
     /// For calls: the argument expressions in order (keyword arguments reduced to their values).
     pub args: Vec<AstIdx>,
+    /// For calls: the keyword name of each of `args` (`None` for a positional one).
+    pub arg_names: Vec<Option<String>>,
+    /// For calls: the properties of object / dictionary / struct literals among the arguments, by
+    /// name, with the node of the value.
+    pub props: Vec<(String, AstIdx)>,
+    /// The position of the argument each of `props` belongs to.
+    pub prop_args: Vec<usize>,
     /// For method calls: the object the method is called on.
     pub receiver: Option<AstIdx>,
     /// For type declarations: the superclasses, interfaces and traits it names, as written
@@ -133,6 +140,9 @@ impl<S: Spec> Builder<'_, S> {
             code,
             name,
             args: vec![],
+            arg_names: vec![],
+            props: vec![],
+            prop_args: vec![],
             receiver: None,
             bases: vec![],
         });
@@ -150,13 +160,26 @@ impl<S: Spec> Builder<'_, S> {
             self.ast.nodes[idx].bases =
                 self.spec.class_bases(self.src, first).iter().map(|b| crate::lang::common::type_name(b)).filter(|b| !b.is_empty()).collect();
         }
+        // `return { algorithms: [x] }`: what the properties of the returned literal hold
+        if kind == NodeKind::Return
+            && let Some(v) = self.spec.return_value(n)
+        {
+            let found: Vec<(String, AstIdx)> = crate::lang::common::literal_props(self.spec, self.src, &[v]).into_iter().filter_map(|(k, x)| Some((k, self.ast.find((x.start_byte(), x.end_byte()), x.kind_id())?))).collect();
+            self.ast.nodes[idx].prop_args = vec![0; found.len()];
+            self.ast.nodes[idx].props = found;
+        }
         if kind == NodeKind::Call
             && let Some(cp) = self.spec.call_parts(self.src, n)
         {
             let find = |x: Node| self.ast.find((x.start_byte(), x.end_byte()), x.kind_id());
-            let args = cp.args.iter().filter_map(|&a| find(a)).collect();
+            let found: Vec<(AstIdx, Option<String>)> = cp.args.iter().enumerate().filter_map(|(i, &a)| Some((find(a)?, cp.names.get(i).cloned().flatten()))).collect();
             let receiver = cp.receiver.and_then(find);
-            self.ast.nodes[idx].args = args;
+            let indexed: Vec<(usize, String, AstIdx)> = crate::lang::common::indexed_props(self.spec, self.src, &cp.args, true).into_iter().filter_map(|(i, k, v)| Some((i, k, find(v)?))).collect();
+            self.ast.nodes[idx].prop_args = indexed.iter().map(|(i, ..)| *i).collect();
+            let props = indexed.into_iter().map(|(_, k, v)| (k, v)).collect();
+            self.ast.nodes[idx].args = found.iter().map(|(a, _)| *a).collect();
+            self.ast.nodes[idx].arg_names = found.into_iter().map(|(_, n)| n).collect();
+            self.ast.nodes[idx].props = props;
             self.ast.nodes[idx].receiver = receiver;
         }
         idx

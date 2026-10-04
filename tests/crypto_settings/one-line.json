@@ -1,0 +1,1 @@
+{"server": {"ssl_protocols": "TLSv1.2", "tls_min_version": 1.0}, "ciphers": ["RC4-SHA", "AES256-GCM"], "ok": {"tls_min_version": "TLSv1.3"}}

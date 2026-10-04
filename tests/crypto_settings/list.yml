@@ -1,0 +1,8 @@
+tls_servers:
+  - {name: a, tls_min_version: 1.0}
+  - name: b
+    ciphers: [RC4-SHA, AES256-GCM]
+tls_lists: &weak
+  - SSLv3
+  - TLSv1.2
+copy_tls: *weak

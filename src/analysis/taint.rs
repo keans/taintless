@@ -206,6 +206,9 @@ fn store_through(st: &mut State, target: &str, t: Taint, strong: bool) {
 pub struct Hit {
     pub finding: Finding,
     pub path: Vec<String>,
+    /// The sink is reached by this property of the parameter (an options object: `jwt.verify(t, k,
+    /// opts)` reads `opts.algorithms`), not by the parameter as a whole.
+    pub prop: Option<String>,
 }
 
 /// What a function does with its inputs.
@@ -233,6 +236,8 @@ pub struct Summary {
     pub param_writes: BTreeMap<(usize, String), ArgDeps>,
     /// Parameters returned as themselves (`return a`): the result is the same object.
     pub ret_alias: BTreeSet<usize>,
+    /// What the properties of a returned object / dictionary hold (`return { algorithms: [x] }`).
+    pub ret_props: BTreeMap<String, ArgDeps>,
     /// Callable contents written through an object/container parameter.
     pub callable_writes: BTreeMap<(usize, String), (BTreeSet<usize>, BTreeSet<usize>)>,
 }
@@ -275,6 +280,9 @@ pub struct FnInfo<'a> {
     pub file: &'a Path,
     pub cfg: &'a Cfg,
     pub rules: &'static RuleSet,
+    /// What the file's imports call things (`import os as o`, `from os import system`), so rules
+    /// written for `os.system` also match `o.system(..)` and `system(..)`.
+    pub aliases: Option<&'a super::crypto::Bindings>,
 }
 
 /// What one analysis of a function looked at besides its own code, with the values it saw.
@@ -654,6 +662,18 @@ impl Analyzer<'_> {
         st.types.get(&self.type_key(root)).map(|class| (class.clone(), field))
     }
 
+    /// The key of one property of a field (`this.opts.algorithms` is `(Class, "opts.algorithms")`).
+    fn property_key(&self, p: &str, st: &State) -> Option<FieldKey> {
+        let (root, rest) = p.split_once('.')?;
+        if !rest.contains(['.', '[']) {
+            return None;
+        }
+        if self.me.cfg.receiver.as_deref() == Some(root) {
+            return Some((class_of(&self.me.cfg.name)?.to_string(), rest.to_string()));
+        }
+        st.types.get(&self.type_key(root)).map(|class| (class.clone(), rest.to_string()))
+    }
+
     /// The functions a flow may hold as a value: what the state recorded for the variable,
     /// field or container, what other methods of the class stored in the field, and module-level
     /// registries. With `named`, a function named directly counts as well.
@@ -819,13 +839,20 @@ impl Analyzer<'_> {
         }
     }
 
+    /// The other names an imported alias gives this callee.
+    fn alternatives(&self, callee: &str) -> Vec<String> {
+        self.me.aliases.map(|b| b.alternatives(callee)).unwrap_or_default()
+    }
+
     fn eval_call(&self, c: &CallFlow, st: &State, line: usize) -> Taint {
         let rules = self.rules();
-        if rules.is_sanitizer(&c.callee) {
+        let alts = self.alternatives(&c.callee);
+        let names = || std::iter::once(c.callee.as_str()).chain(alts.iter().map(String::as_str));
+        if names().any(|n| rules.is_sanitizer(n)) {
             return Taint::new();
         }
-        if rules.is_source_call(&c.callee) {
-            let desc = match rules.source_call_note(&c.callee) {
+        if let Some(call) = names().find(|n| rules.is_source_call(n)) {
+            let desc = match rules.source_call_note(call) {
                 Some(note) => format!("{}() ({note})", c.callee),
                 None => format!("{}()", c.callee),
             };
@@ -972,6 +999,17 @@ impl Analyzer<'_> {
             let class = if a.strong { self.constructed(&a.value, st).or_else(|| self.copy_of(value, st)) } else { None };
             if !covered(a) {
                 store_through(st, &a.target, t, a.strong);
+            }
+            // `opts = build(req)`: the properties of the literal `build` returns
+            if a.strong && let Flow::Call(cc) = &a.value {
+                let r = self.resolve(cc, st);
+                for &id in r.ids.iter().filter(|_| r.exact) {
+                    let Some(sum) = self.env.summary(id) else { continue };
+                    for (name, d) in &sum.ret_props {
+                        let taint = self.ret_prop_taint(d, id, cc, st, s.line);
+                        store_through(st, &self.prop_path(&a.target, name), taint, true);
+                    }
+                }
             }
             if a.strong
                 && let Flow::Path(src) = value
@@ -1122,7 +1160,14 @@ impl Analyzer<'_> {
                 writes.push((p.clone(), t));
             }
         }
+        // what is stored under a property of a field (`this.opts = { algorithms: x }`)
+        for e in &s.elems {
+            writes.push((e.target.clone(), self.eval(&e.value, st, s.line)));
+        }
         for (target, taint) in writes {
+            if let Some(key) = self.property_key(&target, st) {
+                out.field_write(key, &taint, self.me.file, s.line);
+            }
             let Some(key) = self.field_key(&target, st) else { continue };
             out.field_write(key, &taint, self.me.file, s.line);
         }
@@ -1133,7 +1178,10 @@ impl Analyzer<'_> {
     fn check(&self, s: &Stmt, st: &State, out: &mut Output) {
         self.line.set(s.line);
         for c in &s.calls {
-            let applicable = |r: &&CallRule| matches(r.pattern, &c.callee) && !r.except.iter().any(|e| matches(e, &c.callee));
+            let alts = self.alternatives(&c.callee);
+            let applicable = |r: &&CallRule| {
+                std::iter::once(c.callee.as_str()).chain(alts.iter().map(String::as_str)).any(|n| matches(r.pattern, n) && !r.except.iter().any(|e| matches(e, n)))
+            };
             for rule in self.rules().rules.iter().filter(applicable) {
                 let (taint, always) = match rule.mode {
                     Mode::Tainted(sel) => (self.select(c, sel, st, s.line), false),
@@ -1166,7 +1214,17 @@ impl Analyzer<'_> {
                 }
                 for k in &taint {
                     if let Cause::Param(i) = k {
-                        out.hit(*i, Hit { finding: finding.clone(), path: vec![] });
+                        out.hit(*i, Hit { finding: finding.clone(), path: vec![], prop: None });
+                    }
+                }
+                // an options object received as a parameter: the caller decides what its property holds
+                if let Mode::Tainted(ArgSel::Named(name)) = rule.mode {
+                    for a in &c.args {
+                        if let Flow::Path(p) = a
+                            && let Some(j) = self.me.cfg.params.iter().position(|ns| ns.contains(p))
+                        {
+                            out.hit(j, Hit { finding: finding.clone(), path: vec![], prop: Some(name.to_string()) });
+                        }
                     }
                 }
             }
@@ -1184,6 +1242,75 @@ impl Analyzer<'_> {
         }
     }
 
+    /// What a property of the object `callee` (function `id`) returns holds, at this call.
+    fn ret_prop_taint(&self, d: &ArgDeps, id: usize, cc: &CallFlow, st: &State, line: usize) -> Taint {
+        let params_only = ArgDeps { params: d.params.clone(), sources: BTreeSet::new() };
+        let mut t = self.deps_taint(&params_only, cc, &self.env.fns[id].cfg.params, st, line);
+        for (_, desc) in &d.sources {
+            t.insert(Cause::Source { line: cc.line, desc: format!("{desc} → returned by {}()", cc.callee) });
+        }
+        t
+    }
+
+    /// The path a literal's key is recorded under: `.name` in JS and Go, `['name']` elsewhere.
+    fn prop_path(&self, base: &str, name: &str) -> String {
+        if self.me.lang.dot_keys() { format!("{base}.{name}") } else { format!("{base}['{name}']") }
+    }
+
+    /// The properties recorded for the object `base` (`opts = { a: x }`), with what they hold.
+    fn entries_of(&self, st: &State, base: &str) -> Vec<(String, Taint)> {
+        st.taint
+            .iter()
+            .filter(|(_, v)| !v.is_empty())
+            .filter_map(|(k, v)| {
+                let rest = k.strip_prefix(base)?;
+                let name = rest.strip_prefix('.').or_else(|| rest.strip_prefix("['").and_then(|r| r.strip_suffix("']")))?;
+                (!name.is_empty() && !name.contains(['.', '[', '\''])).then(|| (name.to_string(), v.clone()))
+            })
+            .collect()
+    }
+
+    /// What the property `name` of the object passed as `arg` holds: a literal written in the call,
+    /// a variable with recorded properties, or the result of a function that returns a literal.
+    fn prop_taint(&self, c: &CallFlow, arg: &Flow, name: &str, st: &State, line: usize) -> Taint {
+        let mut t = Taint::new();
+        // a literal in the call (it may have collapsed into one of its values, which is no variable)
+        if !c.props.is_empty() {
+            for (_, v) in c.props.iter().filter(|(k, _)| k == name) {
+                union_into(&mut t, &self.eval(v, st, line));
+            }
+            return t;
+        }
+        match arg {
+            Flow::Call(cc) => {
+                let r = self.resolve(cc, st);
+                for &id in r.ids.iter().filter(|_| r.exact) {
+                    if let Some(d) = self.env.summary(id).and_then(|m| m.ret_props.get(name)) {
+                        union_into(&mut t, &self.ret_prop_taint(d, id, cc, st, line));
+                    }
+                }
+            }
+            Flow::Path(p) => {
+                let path = self.prop_path(p, name);
+                if st.taint.get(&path).is_some_and(|v| !v.is_empty()) {
+                    union_into(&mut t, &self.eval(&Flow::Path(path), st, line));
+                } else if !st.is_bound(&path)
+                    && let Some(key) = self.property_key(&path, st)
+                    && let Some(ft) = self.env.field(&key)
+                {
+                    // what other methods of the class stored in that property of the field
+                    for k in ft {
+                        if let Cause::Source { desc, .. } = k {
+                            t.insert(Cause::Source { line, desc: format!("{desc} → field `{}` of {}", key.1.split(['.', '[']).next().unwrap_or(&key.1), key.0) });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        t
+    }
+
     fn select(&self, c: &CallFlow, sel: ArgSel, st: &State, line: usize) -> Taint {
         let mut t = Taint::new();
         match sel {
@@ -1191,6 +1318,26 @@ impl Analyzer<'_> {
             ArgSel::At(i) => {
                 if let Some(a) = c.args.get(i) {
                     union_into(&mut t, &self.eval(a, st, line));
+                }
+            }
+            ArgSel::Named(name) => {
+                for (a, n) in c.args.iter().zip(&c.arg_names) {
+                    if n.as_deref() == Some(name) {
+                        union_into(&mut t, &self.eval(a, st, line));
+                    }
+                }
+                // a property of an object / dictionary / struct literal argument, nested ones included
+                for (_, v) in c.props.iter().filter(|(k, _)| k == name) {
+                    union_into(&mut t, &self.eval(v, st, line));
+                }
+                // ... or of one built in a variable (`opts = { algorithm: x }; f(opts)`) or returned by a
+                // function (`f(build())`; not when an argument is a literal: it may have collapsed into
+                // one of its values, which is no variable). Only an element the code recorded counts,
+                // not what the whole variable holds: a tainted `iv` is no options object with a `key`
+                for a in c.args.iter().filter(|_| c.props.is_empty()) {
+                    if matches!(a, Flow::Path(_) | Flow::Call(_)) {
+                        union_into(&mut t, &self.prop_taint(c, a, name, st, line));
+                    }
                 }
             }
         }
@@ -1210,7 +1357,7 @@ impl Analyzer<'_> {
                         f.origin = Some(format!("{desc} (line {line}) via {}", path.join(" → ")));
                         out.findings.push(f);
                     }
-                    Cause::Param(k) => out.hit(*k, Hit { finding: h.finding.clone(), path }),
+                    Cause::Param(k) => out.hit(*k, Hit { finding: h.finding.clone(), path, prop: None }),
                 }
             }
         }
@@ -1265,7 +1412,22 @@ impl Analyzer<'_> {
             let step = format!("{}() at {}:{}", callee.cfg.name, base(self.me.file), c.line);
             for (j, hits) in sum.param_sinks.iter().enumerate() {
                 let Some(arg) = (!hits.is_empty()).then(|| arg_for(c, j, &callee.cfg.params)).flatten() else { continue };
-                self.apply_hits(hits, &self.eval(arg, st, line), &step, out);
+                let (by_prop, whole): (Vec<Hit>, Vec<Hit>) = hits.iter().cloned().partition(|h| h.prop.is_some());
+                if !whole.is_empty() {
+                    self.apply_hits(&whole, &self.eval(arg, st, line), &step, out);
+                }
+                for h in &by_prop {
+                    let name = h.prop.as_deref().unwrap_or_default();
+                    self.apply_hits(std::slice::from_ref(h), &self.prop_taint(c, arg, name, st, line), &step, out);
+                    // our own parameter is handed on as the options object
+                    if let Flow::Path(p) = arg
+                        && let Some(m) = self.me.cfg.params.iter().position(|ns| ns.contains(p))
+                    {
+                        let mut path = vec![step.clone()];
+                        path.extend(h.path.iter().cloned());
+                        out.hit(m, Hit { finding: h.finding.clone(), path, prop: h.prop.clone() });
+                    }
+                }
             }
             // `r.run()` where `r` holds untrusted data in its fields and `run` reads them
             if let Some(recv) = &c.recv
@@ -1643,6 +1805,21 @@ fn analyze_fn(env: &Env, id: usize) -> FnResult {
                 }
             }
             if let Some(r) = &s.ret {
+                // the properties of a returned literal, or of a variable that holds one
+                let mut props: Vec<(String, Taint)> = s.ret_props.iter().map(|(k, f)| (k.clone(), an.eval(f, &st, s.line))).collect();
+                if let Flow::Path(p) = r {
+                    props.extend(an.entries_of(&st, p));
+                }
+                for (name, taint) in props {
+                    let mut deps = split_deps(&taint);
+                    deps.params.retain(|p| *p < OUTER_PARAM);
+                    if !deps.params.is_empty() || !deps.sources.is_empty() {
+                        let slot = summary.ret_props.entry(name).or_default();
+                        slot.params.extend(deps.params);
+                        // described with where it comes from, like a returned source
+                        slot.sources.extend(deps.sources.into_iter().map(|(l, desc)| (0, format!("{desc} at {}:{l}", base(me.file)))));
+                    }
+                }
                 summary.ret_fns.extend(an.refs_of(r, &st, true));
                 if let Flow::Path(name) = r
                     && !reassigned.contains(name.as_str())

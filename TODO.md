@@ -5,20 +5,28 @@ Open work only. See [README.md](README.md) for implemented behavior and
 
 ## Storage and incremental analysis
 
-Per-file IR caching, a project-results cache with pruning, graph indexing,
-queries, exports, and findings triage (including SARIF) are implemented. The
-remaining work is:
+Implemented: per-file IR cache, project-results cache, graph index, queries,
+exports, triage (SARIF included). Open:
 
-- [ ] Cache function summaries and recompute only affected functions after a
-  change. Re-resolve imports and calls for changed files and dependents, then
-  propagate summary changes through callers until they stabilize. Today a
-  changed project re-analyzes every function.
-- [ ] Update stored CPG nodes and edges per changed file. Recompute cross-file
-  `Call`, `Imports`, and interprocedural `Reaching` edges for affected files.
-  Today `index` replaces the whole graph when the project changes.
-- [ ] Run cache equivalence tests on external corpora. Cold, warm, and
-  edited-tree scans must match `--no-cache`; fixture tests already cover
-  `security`, `calls`, `flow`, and `cfg`.
+- [ ] Cache function summaries; after a change, re-resolve imports and calls
+  for changed files and dependents and recompute only affected functions,
+  propagating through callers until stable (today every function is
+  re-analyzed).
+- [ ] Update stored CPG nodes and edges per changed file, including
+  cross-file `Call`, `Imports` and interprocedural `Reaching` edges (today
+  `index` replaces the whole graph).
+- [ ] Cache equivalence tests on external corpora: cold, warm and edited-tree
+  scans must match `--no-cache` (fixtures already cover `security`, `calls`,
+  `flow`, `cfg`).
+
+## Crypto inventory
+
+Implemented: `taintless crypto` and the `crypto-*-from-input` rules (see the
+[guide](docs/guide.md#crypto-inventory) and
+[limitations](docs/limitations.md)). Open:
+
+- [ ] Languages: PHP, Ruby, Swift (grammar plus a `Spec`; see
+  `src/lang/csharp.rs`).
 
 ## Deliberate limits
 

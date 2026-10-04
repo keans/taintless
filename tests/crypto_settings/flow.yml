@@ -1,0 +1,17 @@
+tls_defaults: &tls
+  min_version: TLSv1
+  ciphers: [AES128-SHA, RC4-SHA]
+prod_tls:
+  <<: *tls
+  port: 443
+staging:
+  tls: *tls
+inline: {ssl_protocols: [TLSv1.2, SSLv3], other: {tls_min_version: 1.0}}
+multi:
+  tls: {
+    ciphers: ["3DES-CBC", "AES256-GCM"],
+    min_version: "TLSv1.2"
+  }
+safe: &ok TLSv1.3
+modern:
+  tls_version: *ok

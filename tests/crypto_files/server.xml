@@ -1,0 +1,5 @@
+<Server>
+  <!-- <Connector sslProtocol="SSLv3"/> -->
+  <Connector port="8443" protocol="HTTP/1.1" SSLEnabled="true" sslProtocol="TLSv1" ciphers="TLS_RSA_WITH_RC4_128_SHA,TLS_AES_128_GCM_SHA256"/>
+  <Connector port="8444" sslEnabledProtocols="TLSv1.2,TLSv1.3"/>
+</Server>

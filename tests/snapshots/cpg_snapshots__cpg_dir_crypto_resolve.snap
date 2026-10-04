@@ -1,0 +1,13 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 4, "call": 19, "field_access": 11, "file": 3, "identifier": 81, "literal": 6, "local": 4, "method": 10, "method_return": 10, "other": 79, "param": 16, "return": 7, "type": 1, "type_decl": 5}
+edges: {"argument": 25, "ast": 238, "call": 7, "cdg": 16, "cfg": 26, "contains": 25, "param_in": 10, "reaching": 39, "receiver": 14, "ref": 24, "return_out": 7, "scope": 15, "type_of": 2}
+call Use.f -> AesFactory.build
+call Use.f -> DesFactory.build
+call encrypt_middle -> encrypt_inner
+call encrypt_outer -> encrypt_middle
+call run -> Decryptor.seal
+call run -> Encryptor.seal
+call run -> encrypt_outer

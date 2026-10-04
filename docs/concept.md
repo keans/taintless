@@ -29,6 +29,11 @@ with one engine:
   **Command:** `taintless deps`
   **Result:** import / call graph of files, cycles
 
+- **Which cryptography does the code use, and is it sound?**
+  **Command:** `taintless crypto`
+  **Result:** libraries, calls, algorithms, weak or hardcoded values, keys and
+  TLS settings in files (text, JSON, CycloneDX CBOM, SARIF)
+
 It is a **static, syntax-driven analyzer**: no compiler, no build, no type
 checker, no network. It must work on a checkout it has never seen, on broken or
 partial code, and on thousands of files in seconds. The price is that it
@@ -38,9 +43,9 @@ that trade-off.
 
 ### Goals
 
-- **One front end for every language.** Eight languages (Python, JavaScript,
-  TypeScript/TSX, Rust, Go, Java, C, C++) lower to the same IR. Analyses use
-  those facts or the CPG built from them.
+- **One front end for every language.** Ten languages (Python, JavaScript,
+  TypeScript/TSX, Rust, Go, Java, Kotlin, C#, C, C++) lower to the same IR.
+  Analyses use those facts or the CPG built from them.
 - **Useful security findings at low noise.** Taint analysis that explains
   itself (source, path, sink) and can be adopted on an existing code base
   (baseline, suppressions, configuration).
@@ -179,8 +184,10 @@ gives it (`x = A(); x.run(); x = B(); x.run()`).
   across files. Class-level field facts (`self.cmd = input()` read in another
   method) are found by extra whole-project rounds.
 - *Sources, sinks, sanitizers* are tables per language family, extensible from
-  `.taintless.toml`. Entry-point parameters can be sources (`[[entry]]`; Java
-  `main`, C `argv` built in).
+  `.taintless.toml`. A call is matched under its written name and under the
+  names its file's import aliases give it (`FnInfo::aliases`, built from the
+  import statements by the crypto module's `Bindings`). Entry-point
+  parameters can be sources (`[[entry]]`; Java `main`, C `argv` built in).
 - *Rules without flow* (weak hashes, unsafe C functions, ...) and *unreachable
   code* are separate passes over the same CFGs.
 
@@ -197,6 +204,63 @@ same resolution feeds `Resolver` so that "which `helper`" is decided once.
 parameter and return → call edges across functions, closures and callbacks;
 slicing by variable or function. `analysis::dataflow::build` builds a CPG from
 the input files, then draws the `flow` view from its edges.
+
+**Crypto inventory (`crypto.rs`, `crypto/tables.rs`, `crypto/tables.toml`).**
+Name-based, like the rest: it reads the lowered CFGs and imports, not types, so
+it needs no taint state and runs on its own (`taintless crypto`).
+
+- *Tables are data.* Libraries (import prefixes), crypto calls (`name`,
+  `a.b`, `*.method`, `PREFIX_*`, the same matcher as `rules.rs`), secret
+  arguments, minimum work factors and non-cryptographic generators are in
+  `tables.toml`, embedded at build time and parsed once. `[[crypto.*]]`
+  entries in `.taintless.toml` are matched before the built-in ones. An entry
+  can be scoped to a library, so a short name like `sha256` counts only where
+  that library is imported.
+- *Resolving a call.* The callee is matched as written, then with import
+  bindings applied (`import hashlib as h`, `from m import x as y`, wildcard
+  and static imports; read from the import statement's text because `Import`
+  keeps no aliases). The matched name, not the written one, feeds the checks.
+- *Reading arguments.* The CFG keeps literals as `Flow::Clean`, so the
+  arguments are read from the source text at the call's position. A name with
+  a single literal definition in the file stands for its value. From the
+  arguments come the algorithm (`"AES/ECB/.."`), weak algorithms and modes,
+  key sizes, hardcoded keys, IVs, salts and secrets, work factors and
+  constant PRNG seeds.
+- *Objects.* A variable or field assigned once from a crypto call is that
+  object; methods called on it (or directly on the call's result) are listed
+  with its algorithm. Within a function, plus fields per file, and across
+  functions: the files are scanned twice, the first pass recording per
+  function the crypto object it returns and the methods it calls on its
+  parameters (`Summaries`, keyed by the function's index in the call graph).
+  Between the passes the call graph (`callgraph::build_refs`, with import
+  visibility) is built, only when some function handles a crypto object, and
+  every call it resolves is mapped to its callee indexes (`call_targets`).
+  The second pass lets `c = make()` carry the returned object and lists the
+  parameter methods where a crypto object is passed in, also those of the
+  functions the parameter is passed on to (three calls deep, with a cycle
+  guard); a call the graph does
+  not resolve falls back to the one project function with that simple name.
+  Copies, list literals and `append` / `add` / `put` of crypto objects are
+  followed inside a function.
+- *Beyond parsed code.* A file walk adds manifests and lock files (declared
+  libraries, flagged when no file imports them), PEM blocks in any text file,
+  keystores, TLS and cipher settings in configuration files, small keys in
+  scripts, and hand-rolled or embedded algorithms recognized by their
+  constants (hex literals in source, byte patterns in binaries). Switched-off
+  entries and deny lists are not findings.
+- *Taint link.* The `secret` and `algorithm` tables also feed the taint
+  analysis: `rules_for` adds a sink for each key, IV and algorithm argument
+  (`crypto-key-from-input`, `crypto-iv-from-input`,
+  `crypto-algorithm-from-input`), so untrusted data reaching them is an
+  ordinary finding with a call chain, severity, baseline and suppression.
+  Environment sources are ignored for these rules. An argument is selected by
+  position, by keyword (`ArgSel::Named`, from `CallFlow::arg_names`) or by the
+  name of a property of an object, dictionary or struct literal among the
+  arguments (`CallFlow::props`, filled by the lowering next to the joined
+  literal, which stays one of `args`).
+- *Output.* A flat list of `CryptoUse` records rendered as text, JSON, a
+  CycloneDX 1.6 CBOM or SARIF, with quantum tags (RSA, ECC, DH vulnerable;
+  ML-KEM, ML-DSA safe). `--fail-on-weak` is the CI gate.
 
 **Findings pipeline.** Rules/taint → configuration filter (`disable`,
 `exclude`, per-rule excludes, severity, nested configs) → suppression comments
@@ -265,7 +329,10 @@ the graphs used to draw its `Call` and `Imports` edges.
 The CPG taint query uses the same rule tables as `analysis/taint.rs`. It
 matches that reference analysis on fixture files and directories and this
 repository's Rust sources, including finding messages, origins and call
-chains. Selected sink arguments respect sanitizers. `security` still uses the
+chains, including keyword arguments, properties of literal arguments (kept
+per call in `Cpg::call_meta`, including the literal a variable argument was
+assigned) and import aliases (`Cpg::bindings`). Selected sink arguments respect
+sanitizers. `security` still uses the
 summary-based analysis; the CPG query remains available for graph-backed
 analysis. JSON, GraphML, DOT and Neo4j CSV exports are available.
 
@@ -309,6 +376,16 @@ and event ordering are also not modeled.
   **Do this:** Add it to the family's table, or to `.taintless.toml` for one
   project
   **Touch:** `analysis/rules.rs` / config
+
+- **A crypto library, call or secret argument**
+  **Do this:** Add a row to `tables.toml` (specific entries before general
+  ones such as `EVP_*`), or to `[[crypto.*]]` in `.taintless.toml`
+  **Touch:** `analysis/crypto/tables.toml`
+
+- **A crypto check on arguments**
+  **Do this:** Extend `inspect` (words in literals and constants) or add a
+  table and a `*_issues` function beside `secret_issues`
+  **Touch:** `analysis/crypto.rs`
 
 - **A rule that is not taint**
   **Do this:** A call rule with an `except` list, or a pass beside

@@ -643,6 +643,11 @@ pub fn base_names(src: &[u8], n: Node, out: &mut Vec<String>) {
 /// `os . system`, `std::process::Command::new`, `Runtime.getRuntime().exec`,
 /// `a?.b` -> dotted path without calls, generics, subscripts, `?`, `!`.
 pub fn normalize_callee(t: &str) -> String {
+    // `new Foo(..)` calls `Foo`; a method named `newFoo` is not a constructor call
+    let t = match t.trim_start().strip_prefix("new") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => rest,
+        _ => t,
+    };
     let mut out = String::with_capacity(t.len());
     let mut depth = 0usize;
     let mut chars = t.chars().peekable();
@@ -664,8 +669,107 @@ pub fn normalize_callee(t: &str) -> String {
             c => out.push(c),
         }
     }
-    let out = out.trim_start_matches("new").to_string();
     out.split('.').filter(|s| !s.is_empty()).collect::<Vec<_>>().join(".")
+}
+
+/// The literal behind an argument: `&Config{..}` and `Config{..}` (Go) are their `{..}` body.
+fn literal_of(n: Node) -> Node {
+    match n.kind() {
+        "unary_expression" | "parenthesized_expression" => n.named_child(0).map_or(n, literal_of),
+        "composite_literal" => named_children(n).into_iter().find(|c| c.kind() == "literal_value").unwrap_or(n),
+        _ => n,
+    }
+}
+
+/// The properties of the object / dictionary / struct literals among `args` (and of the literals
+/// nested in them, two levels deep) as `(name, value expression)`: `{ algorithm: x }`,
+/// `{"key": k}`, `&Config{MinVersion: v}`.
+pub fn literal_props<'a, S: Spec + ?Sized>(spec: &S, src: &[u8], args: &[Node<'a>]) -> Vec<(String, Node<'a>)> {
+    indexed_props(spec, src, args, false).into_iter().map(|(_, k, v)| (k, v)).collect()
+}
+
+/// [`literal_props`], and the properties of the literals that variable arguments were assigned
+/// (`opts = { algorithm: x }; f(opts)`), each with the position of the argument it belongs to. The
+/// summary analysis follows those through the values of the variables instead, which keeps the
+/// line of the source.
+pub fn indexed_props<'a, S: Spec + ?Sized>(spec: &S, src: &[u8], args: &[Node<'a>], variables: bool) -> Vec<(usize, String, Node<'a>)> {
+    let mut out = vec![];
+    for (i, a) in args.iter().enumerate() {
+        let mut found = vec![];
+        nested_props(spec, src, *a, 0, &mut found);
+        if variables {
+            variable_props(spec, src, *a, &mut found);
+        }
+        out.extend(found.into_iter().map(|(k, v)| (i, k, v)));
+    }
+    out
+}
+
+/// The properties of the literal a variable argument was last assigned before the call
+/// (`opts = { algorithm: x }; f(opts)`), looked for in the same function.
+fn variable_props<'a, S: Spec + ?Sized>(spec: &S, src: &[u8], arg: Node<'a>, out: &mut Vec<(String, Node<'a>)>) {
+    if !spec.is_ident(arg) {
+        return;
+    }
+    let name = text(src, arg);
+    let mut scope = arg;
+    while let Some(p) = scope.parent() {
+        scope = p;
+        if spec.is_function(p) {
+            break;
+        }
+    }
+    let mut best: Option<Node<'a>> = None;
+    let mut visited = 0;
+    walk_scope(spec, scope, &mut |n| {
+        visited += 1;
+        if visited > 4000 || n.end_byte() > arg.start_byte() {
+            return;
+        }
+        let Some(parts) = spec.assignment(src, n) else { return };
+        if parts.augmented || parts.targets.len() != parts.values.len() {
+            return;
+        }
+        for (t, v) in parts.targets.iter().zip(&parts.values) {
+            if text(src, *t) == name && spec.mapping_entries(src, literal_of(*v)).is_some() && best.is_none_or(|b| b.start_byte() < v.start_byte()) {
+                best = Some(*v);
+            }
+        }
+    });
+    if let Some(v) = best {
+        nested_props(spec, src, v, 0, out);
+    }
+}
+
+fn nested_props<'a, S: Spec + ?Sized>(spec: &S, src: &[u8], n: Node<'a>, level: usize, out: &mut Vec<(String, Node<'a>)>) {
+    if level >= 3 {
+        return;
+    }
+    let lit = literal_of(n);
+    let entries: Vec<(String, Node<'a>)> = match spec.mapping_entries(src, lit) {
+        // the key as `['a']`, or `.a` where the language has dot syntax (JS)
+        Some(entries) => entries
+            .into_iter()
+            .filter_map(|(k, v)| Some((k.strip_prefix("['").and_then(|k| k.strip_suffix("']")).or_else(|| k.strip_prefix('.'))?.to_string(), v)))
+            .collect(),
+        // Go struct literals: `Config{MinVersion: v}` has bare field names as keys
+        None if lit.kind() == "literal_value" => named_children(lit)
+            .into_iter()
+            .filter(|e| e.kind() == "keyed_element")
+            .filter_map(|e| {
+                let kv = named_children(e);
+                let inner = |x: Node<'a>| if x.kind() == "literal_element" { x.named_child(0).unwrap_or(x) } else { x };
+                let key = text(src, inner(*kv.first()?));
+                let value = inner(*kv.get(1)?);
+                key.chars().all(|c| c.is_alphanumeric() || c == '_').then_some((key, value))
+            })
+            .collect(),
+        None => vec![],
+    };
+    for (name, value) in entries {
+        out.push((name, value));
+        nested_props(spec, src, value, level + 1, out);
+    }
 }
 
 /// The key of an element written as `t`: `[0]` for a small integer, `['k']` for a short quoted
@@ -906,7 +1010,14 @@ impl<'a, S: Spec> Engine<'a, S> {
             st.assigns.push(Assign { target: text(self.src, target), strong: true, value: self.flow(value, 0) });
             b.push_stmt(st);
         }
-        self.stmt(body, &mut b);
+        if body.id() == f.id() {
+            // the statements are the function's own children (a Kotlin lambda has no body node)
+            if let Ctl::Block(children) = self.spec.classify(self.src, body) {
+                self.all(&children, &mut b);
+            }
+        } else {
+            self.stmt(body, &mut b);
+        }
         if let Some(v) = self.spec.implicit_return(f)
             && b.current().is_some()
         {
@@ -914,6 +1025,7 @@ impl<'a, S: Spec> Engine<'a, S> {
             st.span = (v.start_byte(), v.end_byte());
             st.node_kind = v.kind_id();
             st.ret = Some(self.flow(v, 0));
+            st.ret_props = self.ret_props(v);
             b.push_stmt(st);
         }
         self.run_defers(&mut b);
@@ -979,6 +1091,11 @@ impl<'a, S: Spec> Engine<'a, S> {
             t
         };
         t.lines().next().unwrap_or("").trim().to_string()
+    }
+
+    /// The properties of a returned object / dictionary literal.
+    fn ret_props(&self, v: Node<'a>) -> Vec<(String, Flow)> {
+        literal_props(self.spec, self.src, &[v]).into_iter().map(|(k, n)| (k, self.flow(n, 1))).collect()
     }
 
     /// A statement without data-flow facts (synthetic or purely structural).
@@ -1158,12 +1275,15 @@ impl<'a, S: Spec> Engine<'a, S> {
             }
             k
         });
+        // properties of literal arguments by name: `f({ algorithm: x })`, `g(&Config{Min: v})`
+        let props = literal_props(self.spec, self.src, &cp.args).into_iter().map(|(name, value)| (name, self.flow(value, depth + 1))).collect();
         CallFlow {
             callee,
             callee_key,
             recv: cp.receiver.map(|r| self.flow(r, depth + 1)),
             args: cp.args.iter().map(|a| self.flow(*a, depth + 1)).collect(),
             arg_names: cp.names,
+            props,
             line: p.row + 1,
             col: p.column + 1,
         }
@@ -1260,6 +1380,10 @@ impl<'a, S: Spec> Engine<'a, S> {
         let mapping = (a.targets.len() == 1 && a.values.len() == 1 && !a.augmented).then(|| container.and_then(|v| self.spec.mapping_entries(self.src, v))).flatten();
         for (i, t) in a.targets.iter().enumerate() {
             let mut value = if paired { values[i].clone() } else { join(values.clone()) };
+            // `all = { k: x }` holds `x`, it is not another name for it
+            if mapping.is_some() && matches!(value, Flow::Path(_)) {
+                value = Flow::Join(vec![value, Flow::Clean]);
+            }
             let mut names = vec![];
             self.target_names(*t, true, 0, &mut names);
             if a.augmented {
@@ -1278,11 +1402,27 @@ impl<'a, S: Spec> Engine<'a, S> {
                     }
                 }
                 if plain && !target.contains('[') && let Some(entries) = &mapping {
-                    for (key, v) in entries {
-                        elems.push(Assign { target: format!("{target}{key}"), strong: true, value: self.flow(*v, 1) });
-                    }
+                    self.mapping_elems(&target, entries, 0, elems);
                 }
                 out.push(Assign { target, strong: plain && !a.augmented, value: value.clone() });
+            }
+        }
+    }
+
+    /// The elements of a dictionary / object literal assigned to `target`, and those of the literals
+    /// nested in it (`all = { jwt: { algorithms: x } }` gives `all.jwt` and `all.jwt.algorithms`).
+    fn mapping_elems(&self, target: &str, entries: &[(String, Node<'a>)], depth: usize, elems: &mut Vec<Assign>) {
+        for (key, v) in entries {
+            let path = format!("{target}{key}");
+            let inner = (depth < 2).then(|| self.spec.mapping_entries(self.src, literal_of(*v))).flatten();
+            let mut value = self.flow(*v, 1);
+            // a literal holds what is in it, it is not another name for it
+            if inner.is_some() && matches!(value, Flow::Path(_)) {
+                value = Flow::Join(vec![value, Flow::Clean]);
+            }
+            elems.push(Assign { target: path.clone(), strong: true, value });
+            if let Some(inner) = inner {
+                self.mapping_elems(&path, &inner, depth + 1, elems);
             }
         }
     }
@@ -1517,12 +1657,15 @@ impl<'a, S: Spec> Engine<'a, S> {
             }
             Ctl::Return => {
                 self.flows_in(n, b);
-                let ret = self.spec.return_value(n).map(|v| self.flow(v, 0));
+                let value = self.spec.return_value(n);
+                let ret = value.map(|v| self.flow(v, 0));
+                let props = value.map(|v| self.ret_props(v)).unwrap_or_default();
                 self.push_f(n, StmtKind::Other, self.head(n), b, false);
                 if let (Some(flow), Some(blk)) = (ret, b.current())
                     && let Some(last) = b.last_stmt_mut(blk)
                 {
                     last.ret = Some(flow);
+                    last.ret_props = props;
                 }
                 self.early_exit(n, b);
                 self.run_finallys(0, b);

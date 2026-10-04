@@ -113,6 +113,26 @@ taint findings, where the untrusted data came from (`request.args.get() (line
 - **insecure-deserialization, weak-crypto**
   **Examples:** `pickle.loads`, `yaml.load`, `readObject`; `md5`, `sha1`
 
+- **crypto-algorithm-from-input, crypto-key-from-input,
+  crypto-iv-from-input**
+  **Examples:** `Cipher.getInstance(request.getParameter("alg"))`,
+  `hashlib.new(request.args["alg"])`, `crypto.createHash(req.query.alg)`;
+  `AES.new(request.form["key"], ..)`; an IV or nonce taken from the request.
+  They come from the crypto tables (`algorithm` and `secret`), so entries
+  added under `[[crypto.*]]` in `.taintless.toml` become sinks too. Keyword
+  arguments count (`hashlib.new(name=x)`, `AES.new(key=x, iv=y)`), and so do
+  properties of an object, dictionary or struct literal argument, one by one
+  (`jwt.verify(t, k, { algorithms: [x] })`, `tls.connect({ minVersion: x })`,
+  `tls.Dial(.., &tls.Config{MinVersion: x})`): another property holding
+  untrusted data does not make the call a finding. Nested literals count
+  (`{ secureContext: { minVersion: x } }`), and so does an options object
+  built in a variable (`opts = { algorithm: x }; f(opts)`), passed on to
+  a function that hands it to the sink, returned by a function
+  (`f(build(req))`), kept in a field or nested in another literal, property
+  by property. Keys and
+  algorithms from environment variables do not count. A key from the request
+  is only `low`: it is sometimes the design (a user-supplied password).
+
 - **unsafe-function, format-string, insecure-temp-file**
   **Examples:** `gets`, `strcpy`, `sprintf`, `printf(user)`, `memcpy` with a
   tainted size, `mktemp`
@@ -126,7 +146,12 @@ building, calls and container methods such as `list.append`, and is removed by
 **sanitizers** (`int()`, `shlex.quote`, `Integer.parseInt`, `strconv.Atoi`,
 `atoi`, ...) or by overwriting the variable. It is a may-analysis: if any path
 keeps the data tainted, the sink is reported. The rule tables live in
-`src/analysis/rules.rs`.
+`src/analysis/rules.rs`. Names an import introduces are resolved before a
+call is matched, so `import os as o; o.system(x)`, `from os import system`,
+`from subprocess import run as r` and `const { exec: run } =
+require('child_process')` all hit the rules written for `os.system`,
+`subprocess.run` and `child_process.exec` (the finding shows the call as
+written).
 
 **Closures.** Captured sources and parameters flow through nested closures,
 including when the creator is itself a closure. Named nested functions, Java
@@ -251,6 +276,7 @@ call = "myapp.db.raw_query"
 # a built-in rule: gives CWE, severity, message
 rule = "sql-injection"
 arg = 0                                 # optional: only this argument counts
+keyword = "query"                       # optional: or passed by keyword
 
 # parameters of these functions are untrusted
 [[entry]]
@@ -354,10 +380,11 @@ functions is considered too ambiguous). It lists **entry points** (functions no
 other scanned function calls), **recursive** groups, and optionally the
 **external** calls that leave the scanned code.
 
-Class hierarchies are understood (Python, Java, TypeScript/JavaScript, C++ base
-classes, Rust traits): `self.step()` / `this->step()` and a call on a parameter
-declared as `Base` link to the method **and every override in a subclass**,
-inherited methods are found on the subclass, and `super.m()` goes to the base.
+Class hierarchies are understood (Python, Java, Kotlin, C#,
+TypeScript/JavaScript, C++ base classes, Rust traits): `self.step()` /
+`this->step()` and a call on a parameter declared as `Base` link to the method
+**and every override in a subclass**, inherited methods are found on the
+subclass, and `super.m()` goes to the base.
 A function passed as an argument (`register(handler)`) or stored in a variable
 (`f = handler; f()`) gets an edge too; `--format json` lists every call site
 (`lines`) of an edge and which of them are by reference (`callbacks`).
@@ -431,6 +458,214 @@ capture, type_of, ref, inherits, imports`) and one function with `--function`.
   reference. The query remembers call context, so `Req(input())` and
   `Req("ls")` build different objects and `ident(input())` and `ident("ls")`
   return different values.
+
+## Crypto inventory
+
+```sh
+taintless crypto path/to/project                      # text report
+taintless crypto path/to/project --format json        # also: cbom, sarif
+taintless crypto path/to/project --only-weak --fail-on-weak   # CI gate
+taintless crypto path/to/project --min-severity high --fail-on-weak
+taintless crypto path/to/project --config extra.toml  # extra library tables
+```
+
+`taintless crypto` lists the crypto libraries the code imports (OpenSSL,
+`hashlib`, `node:crypto`, Go `crypto/*`, JCE, RustCrypto crates, ...) and the
+crypto functions it calls, grouped by primitive (hash, cipher, mac, kdf,
+signature, tls, random, prng, ...). Each call shows its arguments as written
+and the algorithm, taken from the function name (`hashlib.sha256`) or from an
+argument (`Cipher.getInstance("AES/CBC/..")`, `createHash('sha1')`). A constant
+defined once in the same file stands for its value (`ALGO = "md5";
+hashlib.new(ALGO)`); one written like a constant (`ALGO`, `Algo`) and defined
+in another file of the same language (`Config.ALGO`, `settings.ALGO`) is looked
+up there, if every file that defines it agrees. A constant defined as another
+constant (`ALIAS2 = ALIAS = BASE = "MD5"`) is followed a few hops, and so is a
+parameter: it is what its callers pass (`hash("MD5")` for `def hash(alg)`),
+when there are up to six callers and they all pass the same literal.
+
+**Coverage.** The built-in tables cover the standard libraries and the common
+third-party ones of Python, JavaScript / TypeScript, Rust, Go, Java / Kotlin,
+C# and C / C++: for example `cryptography`, PyCryptodome, PyNaCl,
+`node:crypto`, WebCrypto, `crypto-js`, `jose`, the RustCrypto crates, `ring`,
+`rustls`, the `openssl` crate, Go `crypto/*` and `x/crypto`, JCE, Bouncy
+Castle, Spring Security password encoders, Jasypt, Guava hashing, Tink, JWT
+libraries, OpenSSL, mbedTLS, wolfSSL, libsodium and libgcrypt, and for .NET
+`System.Security.Cryptography` (hashes, `Aes`, `RSA`, `Rfc2898DeriveBytes`,
+`RandomNumberGenerator`, `CipherMode.ECB`, TLS protocol settings and
+certificate callbacks), Bouncy Castle, BCrypt.Net, Konscious Argon2, NSec and
+JWT. NuGet manifests (`*.csproj`, `packages.config`,
+`Directory.Packages.props`) are read. `aes.Key = ..` and `aes.IV = ..` are
+checked like constructor arguments. Calls that only make sense with a
+particular library (a bare `sha256(..)`, `MD5.new(..)`) count only in files
+that import it, and the report shows the library in brackets. Disabled
+certificate checks (`ssl._create_unverified_context`,
+`ssh.InsecureIgnoreHostKey`) and unsalted or single-round password hashing
+(`StandardPasswordEncoder`, `NoOpPasswordEncoder`) are marked weak. Languages
+without a parser here (PHP, Ruby, Swift) are not scanned.
+
+**Aliases.** Names an import introduces are resolved before matching:
+`import hashlib as h`, `from hashlib import md5, sha256 as s2`, `from hashlib
+import *`, `const { createHash: ch } = require('crypto')`, `import * as cr
+from 'node:crypto'`, an aliased Go package, Rust `use md5 as m`, and Java
+static imports, nested Rust `use` groups, and the default import of a library
+that calls patterns know by another name (`import CJ from 'crypto-js'` makes
+`CJ.AES.encrypt` the `CryptoJS.AES.encrypt` of the tables). The call is listed
+as written (`h.md5`).
+
+**Objects.** A method called on an object that a crypto call created (`c =
+Cipher.getInstance(..); c.doFinal(d)`, `Fernet(k).encrypt(d)`) is listed as a
+method with the algorithm of the object, so every place that encrypts or hashes
+shows up, not just the constructor. The object is followed through copies (`b =
+a`), lists and loops over them (`xs = [AES.new(..)]`, `xs[0].encrypt(d)`, `for
+h in xs`), `xs.append(AES.new(..))`, fields of the same file, through a project
+function that returns it (`c = make_cipher()`, also in another file) and into a
+project function it is passed to (`encrypt_with(AES.new(..), d)` lists the
+`cipher.encrypt(d)` inside `encrypt_with`, with the algorithm of the object
+passed in; several callers give several entries). Which function a call reaches
+is decided by the call graph (the same one `taintless calls` shows: classes,
+overloads, imports and declared types), so two classes with a `build` or `seal`
+method are told apart. A call the call graph cannot resolve falls back to the
+one project function with that name, if there is exactly one and its name has
+four or more characters. An object passed on from one function to another
+(`outer(c)` calls `middle(c)` calls `inner(c)`) is followed up to three calls
+deep. A variable assigned in several places is not tracked. A parameter or
+local declared with a crypto class (`Cipher c`, `HashAlgorithm h`) is an object
+of that class, so the methods called on it are listed even where nothing
+creates it (with the algorithm the class implies, usually unknown); where a
+caller passes a concrete object, that report replaces it.
+
+**Weak algorithms** are marked `[weak: reason]`: MD2/4/5, SHA-1, DES/3DES,
+RC2/RC4, Blowfish, ECB mode (`AES.MODE_ECB`, `"AES/ECB/.."`, Java's default for
+`"AES"`), RSA/DH keys below 2048 bits, curves below 224 bits (`secp192r1`) and
+SSLv2/SSLv3/TLS 1.0/1.1.
+
+**Other issues** are listed in brackets after the call: hardcoded keys,
+secrets and passwords, static or all-zero IVs, static salts (by position for
+the common functions, and by keyword for any crypto call: `key=`, `iv=`,
+`nonce=`, `salt=`, `password=`), PBKDF2 iterations below 10000, bcrypt cost
+below 10, constant PRNG seeds, and the use of a non-cryptographic PRNG
+(`random.*`, `Math.random`, `rand()`, `java.util.Random`, Go `math/rand`).
+A PRNG is only a hint: check that it does not produce secrets.
+
+**Files.** Key material and settings outside the parsed code are listed too:
+PEM blocks in any text file, source code included (a committed private key is
+reported as `hardcoded private key`; certificates and public keys are listed
+without a flag; the algorithm and size are read from the key, so `RSA
+1024-bit`, `EC prime192v1` and a certificate with a SHA-1 or MD5 signature are
+marked weak), keys in other encodings (binary DER files such as `.der`, `.crt`,
+`.key` and `.p8`; one line of base64 DER in a config or `.env` file; JSON Web
+Keys, where a `d` or an `oct` key is a secret and the size comes from the
+modulus or the key), keystore files (`.jks`, `.p12`, `.pfx`, ...; the key
+sizes of the certificates inside a `.jks`, `.jceks` or `.bks`, and the
+encryption and MAC of a `.p12`; the libraries and
+weak classes named in a `.jar`), weak
+protocols and ciphers in configuration files (`.conf`, `.cnf`, `.cfg`, `.ini`,
+`.yml`, `.properties`, `.toml`, `.xml` attributes, `.json`, `sshd_config`,
+`java.security`), and 1024-bit or smaller keys generated in shell scripts,
+Dockerfiles and Makefiles (`openssl genrsa 1024`, `ssh-keygen -b 1024`).
+Switched-off entries (`!RC4`, `-SSLv3`) and deny lists
+(`jdk.tls.disabledAlgorithms`) are not findings. A setting is only read when
+its key names `ssl`, `tls`, `cipher`, `protocol`, `macs`, `kex` or `algorithm`.
+In nested formats the key is the whole path, so `min_version` under `tls:`
+(YAML, JSON, a TOML or INI `[tls]` section) counts; list items, XML element
+text and values continued with a backslash are read as values of their key.
+JSON with several keys on a line, YAML flow collections (`tls: {min: 1.0}`),
+YAML anchors and aliases, and `include` directives (the included file is read
+and reported at its own lines) are followed.
+
+**Disabled verification.** Source files and scripts are searched for switched
+off certificate checks and old protocol minimums: `InsecureSkipVerify: true`,
+`MinVersion: tls.VersionTLS10`, `verify=False`, `check_hostname = False`,
+`ssl.CERT_NONE`, `rejectUnauthorized: false`,
+`NODE_TLS_REJECT_UNAUTHORIZED = '0'`, `NoopHostnameVerifier`,
+`danger_accept_invalid_certs(true)`, `curl -k` and `wget
+--no-check-certificate`. Comment lines are skipped. A key size given to a key
+generator (`kpg.initialize(1024)`, `keyGen.init(64)`) is checked like one given
+to a constructor.
+
+**Taint.** `taintless security` also reports untrusted input that chooses
+the algorithm (`Cipher.getInstance(user)`), or becomes a key or an IV (rules
+`crypto-algorithm-from-input`, `crypto-key-from-input`,
+`crypto-iv-from-input`; see "What `security` finds"). `taintless crypto`
+itself does no taint analysis.
+
+**Embedded implementations.** Hand-rolled or vendored algorithms are found by
+their constants, in source files (hex or decimal literals) and in binaries
+(either byte order, files up to 4 MB): the initial words of SHA-1, MD5,
+SHA-224/256/384/512, SHA-3's round constants, SM3 and Camellia, Blowfish's pi
+digits, the SHA-256 round constants, the AES S-box and its inverse, the SM4
+S-box, the Twofish, Serpent, Whirlpool and RC2 tables, the Threefish / Skein
+constant, the DES permutation table and
+ChaCha's `expand 32-byte k`. A file needs all words of an algorithm (SHA-1 and
+MD5 share four, so the fifth decides) or the whole start of the table. They are
+listed without a flag, except the broken ones (MD5, SHA-1, Blowfish, DES, RC2).
+
+**Compiled programs.** Executables, shared libraries and Java class files
+(ELF, Mach-O, PE, `.class`, up to 4 MB) are searched for crypto by their
+symbol and import tables (the printable strings when there is no table):
+the library functions a C or C++ program imports (`EVP_md5`, `mbedtls_*`,
+`crypto_secretbox*`, Mach-O's leading underscore is ignored), the crypto
+libraries it links (`libcrypto`, `libsodium`, `bcrypt.dll`, ...), the crypto
+packages of a Go program (`crypto/md5`), and the algorithm names in a class
+file's constants (`MD5`, `DES/ECB/..`), also inside a `.jar`, and the crypto
+crates of a Rust program (from legacy and v0 symbols). Weak functions and
+algorithms are flagged like the same calls in source.
+
+**Dependencies.** Manifests under the scanned path are read too: `Cargo.toml`,
+`package.json`, `pyproject.toml`, `requirements*.txt`, `setup.py`, `setup.cfg`,
+`Pipfile`, `go.mod`, `pom.xml`, `build.gradle(.kts)`, Gradle's
+`libs.versions.toml`, Conan (`conanfile.txt` / `.py`), `vcpkg.json` and
+`CMakeLists.txt` (`find_package`, imported targets), and the lock files
+`Cargo.lock`, `package-lock.json`, `poetry.lock`, `Pipfile.lock` and `go.sum`.
+Crypto libraries they declare are listed with file and line, and marked `[not
+imported]` when no scanned file imports them (unused, used through another
+library, or code that was not scanned) and `[lock file]` when only a lock file
+names them, which usually means a transitive dependency.
+
+**Output.** `--format cbom` writes a CycloneDX 1.6 cryptographic bill of
+materials (libraries and algorithms with where they are used) and `--format
+sarif` a SARIF 2.1.0 report with one result per weak algorithm or problem in
+the arguments. Public-key algorithms a quantum computer breaks (RSA, ECC, DH,
+DSA) are tagged `[quantum: vulnerable]` and the post-quantum standards (ML-KEM,
+ML-DSA, SLH-DSA, ...) `[quantum: safe]`. `--only-weak` lists only weak
+algorithms and problems in the arguments, `--min-severity low|medium|high`
+keeps those of at least that severity, and `--fail-on-weak` exits with
+status 1 when there are any (after the filters), for CI. The JSON output has a
+`severity` for every flagged entry: `high` for a disabled certificate check,
+committed key material and a hardcoded key or secret; `medium` for weak
+algorithms, modes and protocols, static IVs and salts, small keys, low work
+factors and constant PRNG seeds; `low` for SHA-1 and a plain non-cryptographic
+PRNG.
+
+Matching is by name, using the tables in `src/analysis/crypto/tables.toml`.
+A `.taintless.toml` (or `--config`) can add entries under `[crypto]` in the
+same shape; they are matched before the built-in ones, so an entry can also
+override a built-in one. `lang` is `python`, `javascript` (also TypeScript),
+`rust`, `go`, `java` (also Kotlin), `csharp` or `c` (also C++). A call entry
+takes an optional `weak = true` and an optional `library` (it then counts only
+in files that import that library):
+
+```toml
+[[crypto.library]]
+lang = "python"
+module = "mycorp.crypto"
+name = "mycorp"
+
+[[crypto.call]]
+lang = "python"
+pattern = "mycorp.crypto.seal"
+primitive = "cipher"
+algorithm = "AES-GCM"
+```
+
+The other tables are `dependency` (manifest names that differ from the module),
+`secret` (arguments holding keys, IVs, salts), `algorithm` (arguments that name
+the algorithm), `limit` (minimum iterations or cost) and `prng`; see the header
+of `tables.toml` for the fields. Values that are not literals (read from the
+environment, computed, or defined differently in several files) are not seen,
+and neither are
+keys given as struct fields or JS object properties. This is an inventory, not
+a vulnerability check: the `weak-crypto` rule in `security` is separate.
 
 ## Cache and stored results
 

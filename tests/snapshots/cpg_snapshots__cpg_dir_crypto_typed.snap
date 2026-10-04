@@ -1,0 +1,11 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 3, "call": 12, "field": 3, "field_access": 1, "file": 2, "identifier": 57, "literal": 6, "method": 8, "method_return": 8, "other": 100, "param": 10, "return": 5, "type": 3, "type_decl": 2}
+edges: {"argument": 15, "ast": 204, "call": 5, "cdg": 11, "cfg": 19, "contains": 22, "param_in": 7, "reaching": 23, "receiver": 7, "ref": 18, "return_out": 5, "scope": 10, "type_of": 10}
+call Typed.run -> Typed.open
+call Wrappers.run -> Wrappers.digest
+call Wrappers.run -> Wrappers.other
+call Wrappers.run -> Wrappers.other
+call use -> digest_with

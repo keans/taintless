@@ -1,0 +1,9 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 9, "binary_op": 9, "call": 12, "field": 1, "field_access": 7, "file": 2, "identifier": 57, "literal": 18, "local": 8, "method": 5, "method_return": 6, "other": 90, "param": 3, "return": 4, "type": 1, "type_decl": 1}
+edges: {"argument": 14, "ast": 215, "call": 3, "cdg": 17, "cfg": 23, "contains": 21, "reaching": 18, "receiver": 9, "ref": 23, "return_out": 3, "scope": 6, "type_of": 2}
+call Parts.run -> Parts.legacy
+call run -> algorithm
+call run -> safe

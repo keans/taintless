@@ -1,5 +1,6 @@
 pub mod callgraph;
 pub mod cpg;
+pub mod crypto;
 pub mod deps;
 pub mod dataflow;
 pub mod dot;

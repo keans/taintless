@@ -4,6 +4,7 @@
 pub mod baseline;
 pub mod callgraph;
 pub mod config;
+pub mod crypto;
 pub mod dataflow;
 pub mod deps;
 pub mod link;
@@ -142,12 +143,14 @@ pub fn function_count(files: &[ProjectFile]) -> usize {
 /// and sorted by position.
 pub fn check_project(files: &[ProjectFile], progress: &(dyn Fn() + Sync)) -> Vec<Finding> {
     use rayon::prelude::*;
+    let aliases: Vec<Option<crypto::Bindings>> = files.iter().map(|f| crypto::file_bindings(f.lang, f.file, f.imports, f.cfgs)).collect();
+    let aliases = &aliases;
     let fns: Vec<taint::FnInfo> = files
         .iter()
         .enumerate()
         .flat_map(|(fi, f)| {
             let rules = rules::rules_for(f.lang);
-            f.cfgs.iter().map(move |cfg| taint::FnInfo { file_idx: fi, lang: f.lang, file: f.file, cfg, rules })
+            f.cfgs.iter().map(move |cfg| taint::FnInfo { file_idx: fi, lang: f.lang, file: f.file, cfg, rules, aliases: aliases[fi].as_ref() })
         })
         .collect();
     let dep_files: Vec<deps::DepFile> = files

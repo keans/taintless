@@ -1,0 +1,3 @@
+Ciphers aes256-ctr,3des-cbc,arcfour
+MACs hmac-sha2-256,hmac-md5
+Port 22

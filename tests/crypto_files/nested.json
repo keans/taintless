@@ -1,0 +1,10 @@
+{
+  "tls": {
+    "min_version": "1.0",
+    "protocols": [
+      "TLSv1.2",
+      "TLSv1"
+    ]
+  },
+  "app": { "version": "1.0" }
+}

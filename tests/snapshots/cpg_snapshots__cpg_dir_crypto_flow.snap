@@ -1,0 +1,12 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 3, "binary_op": 3, "call": 17, "field_access": 10, "file": 3, "identifier": 73, "literal": 10, "local": 3, "method": 8, "method_return": 8, "other": 93, "param": 9, "return": 7, "type": 2, "type_decl": 1}
+edges: {"argument": 21, "ast": 234, "call": 6, "cdg": 16, "cfg": 24, "contains": 21, "imports": 1, "param_in": 7, "reaching": 33, "receiver": 11, "ref": 24, "return_out": 6, "scope": 9, "type_of": 4}
+call Svc.run -> Svc.newCipher
+call Svc.run -> Svc.seal
+call run -> digest_with
+call run -> encrypt_with
+call run -> make_cipher
+call run -> make_hash

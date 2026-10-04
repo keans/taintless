@@ -26,10 +26,27 @@
 //! call = "myapp.db.raw_query"
 //! rule = "sql-injection"                # a built-in rule id: gives CWE, message
 //! arg = 0                               # optional: only this argument counts
+//! keyword = "query"                      # optional: or the one passed by this keyword
 //!
 //! [[entry]]                             # parameters of these functions are untrusted
 //! function = "handle_*"
 //! params = ["data"]                     # optional: only these
+//! ```
+//!
+//! `[[crypto.library]]` and `[[crypto.call]]` add libraries and calls to `taintless crypto`, in the shape of
+//! `src/analysis/crypto/tables.toml`:
+//!
+//! ```toml
+//! [[crypto.library]]
+//! lang = "python"
+//! module = "mycorp.crypto"
+//! name = "mycorp-crypto"
+//!
+//! [[crypto.call]]
+//! lang = "python"
+//! pattern = "mycorp.crypto.seal"
+//! primitive = "cipher"
+//! algorithm = "AES-GCM"
 //! ```
 //!
 //! `implicit_flows = true` (top level, off by default) also follows implicit flows: a branch on
@@ -75,6 +92,10 @@ pub struct Config {
     /// variables assigned under it (`if secret: x = 1` taints `x`).
     #[serde(default)]
     pub implicit_flows: bool,
+    /// Extra libraries, calls and arguments for `taintless crypto` (same shape as
+    /// `src/analysis/crypto/tables.toml`); matched before the built-in ones.
+    #[serde(default)]
+    pub crypto: super::crypto::tables::Tables,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -98,6 +119,7 @@ impl Config {
         base.sink.extend(self.sink);
         base.entry.extend(self.entry);
         base.implicit_flows |= self.implicit_flows;
+        base.crypto = self.crypto.on_top_of(base.crypto);
         base
     }
 
@@ -129,6 +151,8 @@ pub struct SinkCfg {
     pub call: String,
     pub rule: String,
     pub arg: Option<usize>,
+    /// Only the argument passed by this keyword (`name=x`); with `arg`, either counts.
+    pub keyword: Option<String>,
     pub severity: Option<String>,
     pub message: Option<String>,
 }
@@ -211,6 +235,10 @@ pub fn install(config: Config) -> Result<()> {
 /// Like `install`, with the configs found in subdirectories (their directory, relative to
 /// the working directory, and contents).
 pub fn install_with(config: Config, nested: Vec<(String, Config)>) -> Result<()> {
+    // the crypto tables feed the crypto sinks of the rules, so they are final before analysis
+    if !config.crypto.is_empty() {
+        super::crypto::tables::install(config.crypto.clone()).map_err(|e| anyhow::anyhow!(e))?;
+    }
     let active = Active::new(config, nested)?;
     ACTIVE.set(active).map_err(|_| anyhow::anyhow!("configuration already installed"))
 }
@@ -229,7 +257,7 @@ pub fn family_of(name: &Option<String>) -> Result<Option<u8>> {
     let Some(n) = name else { return Ok(None) };
     match Language::from_name(n) {
         Some(l) => Ok(Some(l.family())),
-        None => bail!("unknown language `{n}` (python, javascript, typescript, rust, go, java, c, cpp)"),
+        None => bail!("unknown language `{n}` (python, javascript, typescript, rust, go, java, c, cpp, csharp, kotlin)"),
     }
 }
 
@@ -376,15 +404,22 @@ pub(super) fn extend(base: &'static rules::RuleSet, fam: u8, cfg: &Config) -> &'
             .find(|(r, _, _)| *r == s.rule)
             .map(|(id, title, cwe)| (*id, *cwe, proto.map_or(Severity::High, |p| p.severity), proto.map_or(*title, |p| p.message)))
             .expect("validated");
-        rule_list.push(CallRule {
-            pattern: leak(&s.call),
-            id,
-            cwe,
-            severity: s.severity.as_deref().and_then(|x| parse_severity(x).ok()).unwrap_or(sev),
-            message: s.message.as_deref().map_or(msg, leak),
-            mode: Mode::Tainted(s.arg.map_or(ArgSel::Any, ArgSel::At)),
-            except: &[],
-        });
+        let mut sels: Vec<ArgSel> = s.arg.map(ArgSel::At).into_iter().collect();
+        sels.extend(s.keyword.as_deref().map(|k| ArgSel::Named(leak(k))));
+        if sels.is_empty() {
+            sels.push(ArgSel::Any);
+        }
+        for sel in sels {
+            rule_list.push(CallRule {
+                pattern: leak(&s.call),
+                id,
+                cwe,
+                severity: s.severity.as_deref().and_then(|x| parse_severity(x).ok()).unwrap_or(sev),
+                message: s.message.as_deref().map_or(msg, leak),
+                mode: Mode::Tainted(sel),
+                except: &[],
+            });
+        }
     }
     let mut calls = base.source_calls.to_vec();
     let mut paths = base.source_paths.to_vec();
