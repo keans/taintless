@@ -4,9 +4,20 @@
 move through a project, and where untrusted input may reach dangerous code. It
 works directly from source, without building or running the project.
 
-It supports Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C#, Ruby,
-PHP, Swift, C, and C++. This is an experimental, AI-assisted proof of
-concept. Review security findings before acting on them.
+- **Security findings** with CWE ids and the path from source to sink, across
+  functions and files.
+- **Call graph, dependencies, control flow** and a code property graph you can
+  query or export.
+- **Crypto inventory**: libraries, algorithms, keys and TLS settings, with a
+  CycloneDX CBOM or SARIF output.
+- **Incremental**: results are cached, and after an edit only the affected
+  functions are analyzed again.
+
+Languages: Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C#, Ruby,
+PHP, Swift, C and C++.
+
+> **Status:** an experimental, proof of concept at an early stage,
+> not production ready. Review security findings before acting on them.
 
 ## Install
 
@@ -44,6 +55,14 @@ disabled certificate checks, follows crypto objects through functions, and can
 write a CycloneDX CBOM or SARIF; `--fail-on-weak` makes it a CI gate.
 `security` also reports untrusted input that chooses an algorithm, key or IV.
 Commands can emit text, JSON or graph formats where supported.
+
+A finding looks like this:
+
+```text
+app.py:12:5: high [sql-injection] SQL query built from untrusted input:
+    `db.raw_query` (in `handler`, CWE-89)
+    untrusted input from parameter `data` of handler() (line 11)
+```
 
 ## Cache and stored results
 
