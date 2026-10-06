@@ -370,7 +370,7 @@ pub fn discover_nested(scanned: &Path, root: Option<&Path>) -> Result<Vec<(Strin
     }
     let root = root.and_then(|r| r.canonicalize().ok());
     let mut out = vec![];
-    for entry in ignore::WalkBuilder::new(scanned).hidden(false).build().flatten() {
+    for entry in crate::walk::walker(scanned).hidden(false).build().flatten() {
         if entry.file_name() != CONFIG_FILE || !entry.path().is_file() {
             continue;
         }

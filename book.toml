@@ -1,0 +1,9 @@
+[book]
+title = "taintless"
+description = "Static analysis of source code: taint, call graphs, crypto inventory"
+src = "docs"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-icon = "fa-github"

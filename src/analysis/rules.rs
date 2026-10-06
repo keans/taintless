@@ -192,7 +192,7 @@ fn path_matches(pattern: &str, path: &str) -> bool {
 impl RuleSet {
     /// Whether a source description names an environment-like origin.
     pub fn is_env_source(&self, desc: &str) -> bool {
-        let d = desc.to_ascii_lowercase();
+        let d = if desc.bytes().any(|b| b.is_ascii_uppercase()) { std::borrow::Cow::Owned(desc.to_ascii_lowercase()) } else { desc.into() };
         self.env_sources.iter().any(|p| p.strip_prefix('=').map_or_else(|| d.contains(p), |x| d == x))
     }
     pub fn is_source_call(&self, callee: &str) -> bool {

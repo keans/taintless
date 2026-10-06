@@ -26,3 +26,6 @@ perf.data*
 
 # taintless cache
 .taintless/
+
+# mdBook output
+/book/

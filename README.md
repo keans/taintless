@@ -29,13 +29,23 @@ cargo install --path .
 taintless --help
 ```
 
-Or with Docker (the image includes Graphviz; the project is mounted at
-`/src`, and the cache is written to `.taintless/` inside it):
+Or with Docker. The image includes Graphviz and runs `taintless` directly, so
+everything after the image name is the usual command line. The project goes
+in at `/src` (read-only is fine) and a volume at `/cache` keeps the cache out
+of your tree:
 
 ```sh
 docker build -t taintless .
-docker run --rm -v "$PWD:/src" taintless security .
+alias taintless='docker run --rm -u "$(id -u):$(id -g)" \
+  -v "$PWD:/src:ro" -v taintless-cache:/cache \
+  taintless --cache /cache/db.sqlite'
+taintless security .
+taintless cpg . > cpg.json
 ```
+
+The relative path is resolved inside the container, so give paths relative to
+the directory you mounted. Without the cache volume use `--no-cache`, or mount
+`/src` writable and the cache goes to `.taintless/` in the project.
 
 ## Try it
 
@@ -72,6 +82,17 @@ app.py:12:5: high [sql-injection] SQL query built from untrusted input:
     untrusted input from parameter `data` of handler() (line 11)
 ```
 
+### Excluding paths
+
+`.gitignore` and `.ignore` files are respected. Add `--exclude GLOB`
+(repeatable, `.gitignore`-style, relative to the working directory) to leave
+files out of the scan, or `exclude = [...]` in `.taintless.toml` to scan them
+but drop their findings:
+
+```sh
+taintless security . --exclude tests/ --exclude '**/*_test.go'
+```
+
 ## Cache and stored results
 
 Parsed files and unchanged security results are cached in
@@ -100,6 +121,22 @@ baselines, graph exports, triage and output formats.
 - [Design notes](docs/concept.md): architecture and extension points.
 - [Open work](TODO.md): remaining tasks.
 
+### Reading the docs as a website
+
+The `docs/` folder is also an [mdBook](https://rust-lang.github.io/mdBook/)
+(configured in `book.toml`, table of contents in `docs/SUMMARY.md`):
+
+```sh
+cargo install mdbook        # once
+mdbook serve --open         # live preview at http://localhost:3000
+mdbook build                # static site in book/
+```
+
+To add a page, create `docs/<name>.md` and list it in `docs/SUMMARY.md`.
+`book/` is generated and git-ignored. Links to files outside `docs/`
+(`README.md`, `TODO.md`) do not work in the book, so refer to them by name.
+Keep lines to 79 characters (`python3 scripts/check_markdown_width.py`).
+
 ## Development
 
 ```sh
@@ -108,6 +145,7 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 Fixtures and snapshots live under `tests/`; CI also runs smoke tests on real
-projects. The smoke test that scans this repository takes minutes in a debug
-build; `cargo test --release` runs it in well under a minute. See the
+projects. The default test profile uses light optimization and reduced debug
+information to speed up whole-project analysis. CLI tests use two Rayon
+threads per process; set `RAYON_NUM_THREADS` to override this. See the
 [development guide](docs/guide.md#development) for more.

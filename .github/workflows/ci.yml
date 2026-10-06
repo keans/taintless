@@ -17,30 +17,37 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: python3 scripts/check_markdown_width.py
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
 
   # Lower every function of real open-source projects; any parse error or
   # panic fails the job (see tests/smoke.rs).
   corpora:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        repository:
+          - psf/requests
+          - expressjs/express
+          - google/gson
+          - gin-gonic/gin
+          - DaveGamble/cJSON
+          - fmtlib/fmt
+          - BurntSushi/ripgrep
+          - microsoft/TypeScriptSamples
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch corpora
+      - name: Fetch corpus
+        env:
+          CORPUS_REPOSITORY: ${{ matrix.repository }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
-          set -e
-          mkdir -p "$RUNNER_TEMP/corpora" && cd "$RUNNER_TEMP/corpora"
-          git clone --depth 1 https://github.com/psf/requests
-          git clone --depth 1 https://github.com/expressjs/express
-          git clone --depth 1 https://github.com/google/gson
-          git clone --depth 1 https://github.com/gin-gonic/gin
-          git clone --depth 1 https://github.com/DaveGamble/cJSON
-          git clone --depth 1 https://github.com/fmtlib/fmt
-          git clone --depth 1 https://github.com/BurntSushi/ripgrep
-          git clone --depth 1 https://github.com/microsoft/TypeScript-Node-Starter
+          git clone --depth 1 "https://github.com/$CORPUS_REPOSITORY" "$RUNNER_TEMP/corpus"
       - name: Smoke test
+        env:
+          TAINTLESS_CORPUS: ${{ runner.temp }}/corpus
         run: |
-          corpora=$(ls -d "$RUNNER_TEMP"/corpora/*/ | tr '\n' ':')
-          TAINTLESS_CORPUS="$corpora" cargo test --release --test smoke scans_external -- --nocapture
+          cargo test --locked --release --test smoke scans_external_corpora -- --exact --nocapture

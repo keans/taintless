@@ -285,3 +285,17 @@ fn baseline_entries_have_review_dates() {
 fn tmp(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{}-{name}", std::process::id()))
 }
+
+#[test]
+fn exclude_option_skips_files_entirely() {
+    let has_closure = |f: &[(String, u64, String, String)]| f.iter().any(|x| x.0.starts_with("closure_param"));
+    let all = findings(&["tests/vuln"]);
+    assert!(has_closure(&all), "{all:?}");
+    // a glob, relative to the working directory, and a directory pattern (scanning the parent)
+    for (path, glob) in [("tests/vuln", "closure_param.*"), ("tests/vuln", "tests/vuln/closure_param.*"), ("tests", "vuln/")] {
+        let f = findings(&[path, "--exclude", glob]);
+        assert!(!has_closure(&f), "{glob}: {f:?}");
+        // the other files are still analyzed
+        assert!(!f.is_empty() && (path == "tests" || f.len() < all.len()), "{glob}");
+    }
+}

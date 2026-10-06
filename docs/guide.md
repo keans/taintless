@@ -1,7 +1,7 @@
 # User guide
 
 Install the tool from the repository root as described in
-[README.md](../README.md). The commands below use `cargo run --`; replace that
+`README.md`. The commands below use `cargo run --`; replace that
 with `taintless` after installation.
 
 ## Usage
@@ -292,6 +292,12 @@ implicit_flows = true
 [rule.command-injection]
 exclude = ["scripts/**"]
 ```
+
+To leave files out of the scan altogether (they are not analyzed, unlike
+`exclude`, which only drops findings), use `--exclude GLOB` on any command, as
+often as needed. The glob is `.gitignore`-style and relative to the working
+directory: `--exclude tests/ --exclude '**/*_test.go'`. A `.ignore` file in the
+project root does the same without a flag.
 
 A `message = "..."` on a `[[source]]` is shown with the finding's origin. A
 `.taintless.toml` in a subdirectory of the scanned path adds to the root one
@@ -773,7 +779,7 @@ named like `Class.method`, `Type::method` or `ns::Class::f`. `.h` headers that
 use C++ constructs are parsed as C++.
 
 Deliberately not modeled (await/yield, drops, computed goto, `noexcept`): see
-"Deliberate limits" in [TODO.md](../TODO.md).
+"Deliberate limits" in `TODO.md`.
 
 ## Development
 
@@ -787,6 +793,13 @@ cargo clippy --all-targets
 TAINTLESS_CORPUS=/path/to/project:/another/project \
   cargo test --release --test smoke -- --nocapture
 ```
+
+The default test profile uses optimization level 1 and line-table debug
+information, with debug assertions and incremental compilation still enabled.
+The first build after a profile change recompiles dependencies; subsequent
+test builds reuse them. CLI tests default to two Rayon threads per process to
+avoid competing thread pools when tests run concurrently. Set
+`RAYON_NUM_THREADS` to override this when checking parallel behavior.
 
 CI (`.github/workflows/ci.yml`) runs the same checks. Fixtures live in
 `tests/fixtures/<language>/`; each one is snapshot-tested as DOT in

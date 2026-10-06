@@ -19,7 +19,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// The state of an analysis after its first pass.
 #[derive(Serialize, Deserialize)]
 pub struct Persisted {
-    inputs: Vec<crate::inputs::Input>,
     global: String,
     /// The functions of that run, by id.
     fns: Vec<FnRec>,
@@ -141,7 +140,10 @@ impl Fingerprints {
                 (k, names)
             })
             .collect();
+        // the configuration and manifests read, with what they held: other rules, other results
+        let inputs: Vec<u8> = crate::inputs::snapshot().iter().flat_map(|(p, h)| format!("{}\0{}\0", p.display(), h.as_deref().unwrap_or("-")).into_bytes()).collect();
         let global = digest(&[
+            &inputs,
             format!("{rows:?}").as_bytes(),
             visibility.as_bytes(),
             types.global_fingerprint().as_bytes(),
@@ -172,7 +174,6 @@ pub(super) fn capture(fp: &Fingerprints, carry: &Carry) -> Persisted {
         .map(|c| CompRec { reads: c.reads.clone(), results: c.results.clone() })
         .collect();
     Persisted {
-        inputs: crate::inputs::snapshot(),
         global: fp.global.clone(),
         fns: (0..fp.ids.len()).map(|i| FnRec { id: fp.ids[i].clone(), content: fp.content[i].clone(), env: fp.env[i].clone() }).collect(),
         summaries: carry.summaries.clone(),
@@ -187,9 +188,7 @@ pub(super) fn capture(fp: &Fingerprints, carry: &Carry) -> Persisted {
 pub(super) fn seed(mut prior: Persisted, fp: &Fingerprints, comps: &[Vec<NodeIndex>], comp_of: &[usize], counter: &AtomicU64) -> Carry {
     let n = fp.ids.len();
     let mut carry = Carry { cache: vec![None; comps.len()], summaries: vec![None; n], versions: vec![0; n] };
-    // a configuration read now but not when the state was stored changes the rules as well
-    let same_inputs = crate::inputs::unchanged(&prior.inputs) && crate::inputs::snapshot().iter().all(|i| prior.inputs.contains(i));
-    if prior.global != fp.global || !same_inputs {
+    if prior.global != fp.global {
         return carry;
     }
     let new_of: HashMap<&str, usize> = fp.ids.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect();

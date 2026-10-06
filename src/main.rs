@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use ignore::WalkBuilder;
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use taintless::{
@@ -35,6 +34,11 @@ struct Cli {
     /// `.taintless.toml`).
     #[arg(long, global = true)]
     cache: Option<PathBuf>,
+    /// Skip files and directories matching this `.gitignore`-style glob (relative to the working
+    /// directory, e.g. `tests/` or `**/*_test.go`); repeatable. Unlike `exclude` in
+    /// `.taintless.toml`, which drops findings, these files are not analyzed at all.
+    #[arg(long, global = true, value_name = "GLOB")]
+    exclude: Vec<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -418,7 +422,7 @@ fn load(path: &Path, cache: Option<&Path>, configs: Option<&[PathBuf]>) -> Resul
     spinner.enable_steady_tick(Duration::from_millis(80));
     let mut files: Vec<PathBuf> = vec![];
     let mut failed = false;
-    for entry in WalkBuilder::new(path).build() {
+    for entry in taintless::walk::walker(path).build() {
         let entry = match entry {
             Ok(entry) => entry,
             Err(e) => {
@@ -590,6 +594,7 @@ fn default_cache(start: &Path) -> PathBuf {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    taintless::walk::set_excludes(&cli.exclude).map_err(|e| anyhow::anyhow!("invalid --exclude glob: {e}"))?;
     let scanned = match &cli.cmd {
         Cmd::Cfg { path, .. } | Cmd::Security { path, .. } | Cmd::Deps { path, .. } | Cmd::Flow { path, .. } | Cmd::Cpg { path, .. } | Cmd::Calls { path, .. } | Cmd::Crypto { path, .. } | Cmd::Index { path } => path.clone(),
         _ => PathBuf::from("."),
@@ -937,7 +942,7 @@ fn main() -> Result<()> {
             // manifests, key material and settings: every readable file under the path
             let mut declared = vec![];
             let mut seen = std::collections::HashSet::new();
-            for e in WalkBuilder::new(&path).build().filter_map(Result::ok).filter(|e| e.file_type().is_some_and(|t| t.is_file())) {
+            for e in taintless::walk::walker(&path).build().filter_map(Result::ok).filter(|e| e.file_type().is_some_and(|t| t.is_file())) {
                 if e.metadata().is_ok_and(|m| m.len() > 8 << 20) {
                     continue;
                 }

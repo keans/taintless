@@ -3772,7 +3772,7 @@ fn inspect(fam: u8, callee: &str, primitive: &str, args: &[String], resolve: &dy
             let prefix = active().constant_prefix.iter().find(|p| last.starts_with(p.as_str()));
             let apple_constant = prefix.is_some();
             if (last.chars().next().is_some_and(char::is_uppercase) || apple_constant) && (ident.contains('.') || upper_const || apple_constant || last.chars().any(char::is_lowercase)) {
-                if !upper_const && !d.classes.contains(&last.to_string()) {
+                if !upper_const && !d.classes.iter().any(|c| c == last) {
                     d.classes.push(last.to_string());
                 }
                 // CommonCrypto: `kCCAlgorithmDES` names DES

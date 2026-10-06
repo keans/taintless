@@ -42,3 +42,9 @@ insta = "1.48.0"
 
 [build-dependencies]
 blake3 = "1.8.7"
+
+# Whole-project analysis is expensive without optimization. Keep incremental
+# builds and debug assertions while making the default test suite practical.
+[profile.test]
+opt-level = 1
+debug = 1

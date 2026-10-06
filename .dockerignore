@@ -4,3 +4,4 @@ target/
 *.svg
 tests/
 docs/
+book/

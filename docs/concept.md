@@ -2,7 +2,7 @@
 
 This document explains how `taintless` is built and why its analyses share a
 common model. [guide.md](guide.md) is the user manual;
-[TODO.md](../TODO.md) lists the remaining work.
+`TODO.md` lists the remaining work.
 
 ## 1. Purpose
 
@@ -55,7 +55,7 @@ that trade-off.
 - **Deterministic and fast.** Parallel per file, stable output order, so
   results can be diffed and cached.
 - **Honest about limits.** Gaps and deliberate limits are documented in
-  [limitations.md](limitations.md) and [TODO.md](../TODO.md).
+  [limitations.md](limitations.md) and `TODO.md`.
 
 ### Non-goals
 
@@ -371,13 +371,13 @@ nodes and the edges that start in them).
 
 Cold, warm and edited-tree scans must match `--no-cache`; fixture tests cover
 this (`tests/incremental_summaries.rs`, `tests/graph_store.rs`), while
-external-corpus tests remain open. See [TODO.md](../TODO.md).
+external-corpus tests remain open. See `TODO.md`.
 
 ## 6. Deliberate limits
 
 `await`/`yield` suspension points, Rust drops and `?` through `Drop`, computed
 `goto`, and `noexcept` do not change the modeled CFG as described in
-[TODO.md](../TODO.md) and [limitations.md](limitations.md). Thread scheduling
+`TODO.md` and [limitations.md](limitations.md). Thread scheduling
 and event ordering are also not modeled.
 
 ## 7. How to extend

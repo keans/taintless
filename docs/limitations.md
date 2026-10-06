@@ -2,7 +2,7 @@
 
 What `taintless` does not do, does only partly, or does by approximation. Read
 it together with the [user guide](guide.md), the open work
-list ([TODO.md](../TODO.md)) and the design notes ([concept.md](concept.md)).
+list (`TODO.md`) and the design notes ([concept.md](concept.md)).
 
 Legend: **by design** = a deliberate trade-off that will not change; **gap** =
 could be improved, usually listed in TODO.md; **approximation** = the analysis
