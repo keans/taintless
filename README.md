@@ -16,8 +16,8 @@ works directly from source, without building or running the project.
 Languages: Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C#, Ruby,
 PHP, Swift, C and C++.
 
-> **Status:** an experimental, proof of concept at an early stage,
-> not production ready. Review security findings before acting on them.
+> **Status:** an experimental proof of concept at an early stage, not
+> production ready. Review security findings before acting on them.
 
 ## Install
 
@@ -27,6 +27,14 @@ rendering DOT graphs.
 ```sh
 cargo install --path .
 taintless --help
+```
+
+Or with Docker (the image includes Graphviz; the project is mounted at
+`/src`, and the cache is written to `.taintless/` inside it):
+
+```sh
+docker build -t taintless .
+docker run --rm -v "$PWD:/src" taintless security .
 ```
 
 ## Try it
@@ -100,4 +108,6 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 Fixtures and snapshots live under `tests/`; CI also runs smoke tests on real
-projects. See the [development guide](docs/guide.md#development) for more.
+projects. The smoke test that scans this repository takes minutes in a debug
+build; `cargo test --release` runs it in well under a minute. See the
+[development guide](docs/guide.md#development) for more.

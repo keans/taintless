@@ -1,0 +1,6 @@
+target/
+.git/
+.taintless/
+*.svg
+tests/
+docs/
