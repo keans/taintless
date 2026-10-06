@@ -4,9 +4,9 @@
 move through a project, and where untrusted input may reach dangerous code. It
 works directly from source, without building or running the project.
 
-It supports Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C#, C, and
-C++. This is an experimental, AI-assisted proof of concept. Review security
-findings before acting on them.
+It supports Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C#, Ruby,
+PHP, Swift, C, and C++. This is an experimental, AI-assisted proof of
+concept. Review security findings before acting on them.
 
 ## Install
 
@@ -49,7 +49,9 @@ Commands can emit text, JSON or graph formats where supported.
 
 Parsed files and unchanged security results are cached in
 `.taintless/db.sqlite`. `--no-cache` skips scan caching; `--cache <file>`
-selects another database. A changed project is still re-analyzed as a whole.
+selects another database. After an edit only the functions it can affect are
+analyzed again (stored summaries), and `index` rewrites only the changed files'
+rows of the stored graph.
 
 ```sh
 taintless index path/to/project

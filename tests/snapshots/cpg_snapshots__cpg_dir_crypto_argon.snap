@@ -2,5 +2,5 @@
 source: tests/cpg_snapshots.rs
 expression: summary(&c)
 ---
-nodes: {"assign": 4, "binary_op": 5, "call": 19, "field_access": 11, "file": 4, "identifier": 63, "literal": 30, "local": 4, "method": 4, "method_return": 5, "other": 111, "param": 9, "type": 5}
-edges: {"argument": 49, "ast": 256, "cdg": 19, "cfg": 24, "contains": 18, "reaching": 32, "receiver": 10, "ref": 42, "scope": 4, "type_of": 8}
+nodes: {"assign": 5, "binary_op": 5, "call": 28, "field_access": 16, "file": 8, "identifier": 101, "literal": 38, "local": 5, "method": 8, "method_return": 9, "other": 177, "param": 14, "type": 9}
+edges: {"argument": 63, "ast": 392, "cdg": 28, "cfg": 37, "contains": 31, "reaching": 42, "receiver": 15, "ref": 55, "scope": 8, "type_of": 12}

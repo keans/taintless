@@ -16,6 +16,9 @@ pub enum Lang {
     Java,
     C,
     Csharp,
+    Ruby,
+    Php,
+    Swift,
 }
 
 impl Lang {
@@ -29,6 +32,9 @@ impl Lang {
             Self::Java => 4,
             Self::C => 5,
             Self::Csharp => 6,
+            Self::Ruby => 7,
+            Self::Php => 8,
+            Self::Swift => 9,
         }
     }
 }
@@ -144,6 +150,13 @@ pub struct Tables {
     pub limit: Vec<Limit>,
     #[serde(default)]
     pub prng: Vec<Prng>,
+    /// Prefixes of algorithm constants that carry no meaning themselves (`kCCAlgorithm` in
+    /// `kCCAlgorithmDES`).
+    #[serde(default)]
+    pub constant_prefix: Vec<String>,
+    /// Literals of a signature's algorithm argument that mean "unsigned" (`none` in a JWT).
+    #[serde(default)]
+    pub unsigned_literal: Vec<String>,
 }
 
 impl Tables {
@@ -156,11 +169,13 @@ impl Tables {
         self.algorithm.extend(base.algorithm);
         self.limit.extend(base.limit);
         self.prng.extend(base.prng);
+        self.constant_prefix.extend(base.constant_prefix);
+        self.unsigned_literal.extend(base.unsigned_literal);
         self
     }
 
     pub fn is_empty(&self) -> bool {
-        self.library.is_empty() && self.call.is_empty() && self.dependency.is_empty() && self.secret.is_empty() && self.algorithm.is_empty() && self.limit.is_empty() && self.prng.is_empty()
+        self.library.is_empty() && self.call.is_empty() && self.dependency.is_empty() && self.secret.is_empty() && self.algorithm.is_empty() && self.limit.is_empty() && self.prng.is_empty() && self.constant_prefix.is_empty() && self.unsigned_literal.is_empty()
     }
 }
 

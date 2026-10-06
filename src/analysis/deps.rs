@@ -6,6 +6,7 @@
 
 use super::callgraph::{self, CallGraph};
 use super::manifest::Manifests;
+use crate::lang::family;
 use crate::ir::Cfg;
 use crate::lang::{
     Language,
@@ -132,8 +133,8 @@ impl<'a> Index<'a> {
     }
 
     /// Of several candidates keep the ones closest to the importer.
-    fn nearest(&self, importer: usize, mut c: Vec<usize>) -> Vec<usize> {
-        c.retain(|&x| x != importer && self.same_family(importer, x));
+    fn nearest(&self, importer: usize, candidates: &[usize]) -> Vec<usize> {
+        let mut c: Vec<usize> = candidates.iter().copied().filter(|&x| x != importer && self.same_family(importer, x)).collect();
         c.sort_unstable();
         c.dedup();
         let me = segments(self.files[importer].path.parent().unwrap_or(Path::new("")));
@@ -155,11 +156,15 @@ impl<'a> Index<'a> {
         let f = &self.files[importer];
         let dir = f.path.parent().unwrap_or(Path::new("")).to_path_buf();
         match family(f.lang) {
-            0 => self.python(importer, &dir, imp),
-            1 => self.javascript(importer, &dir, imp),
-            2 => self.rust(importer, imp),
-            3 => self.go(importer, imp),
-            4 => self.java(importer, imp),
+            family::PYTHON => self.python(importer, &dir, imp),
+            family::JAVASCRIPT => self.javascript(importer, &dir, imp),
+            family::RUST => self.rust(importer, imp),
+            family::GO => self.go(importer, imp),
+            family::JAVA => self.java(importer, imp),
+            family::RUBY => self.ruby(importer, &dir, imp),
+            family::PHP => self.php(importer, &dir, imp),
+            // Swift modules are not files: the files of one directory see each other
+            family::SWIFT => vec![],
             _ => self.c(importer, &dir, imp),
         }
     }
@@ -198,7 +203,7 @@ impl<'a> Index<'a> {
             if let Some(x) = exact {
                 out.push(x);
             } else if let Some(v) = self.by_stem.get(k) {
-                out.extend(self.nearest(importer, v.clone()));
+                out.extend(self.nearest(importer, v));
             }
         }
         out
@@ -242,16 +247,39 @@ impl<'a> Index<'a> {
         cands.into_iter().find_map(|c| self.file(c, importer))
     }
 
+    /// `require_relative 'x'` (a path from the file) and `require 'a/b'` (a path below a load path,
+    /// matched by its end), with or without `.rb`.
+    fn ruby(&self, importer: usize, dir: &Path, imp: &Import) -> Vec<usize> {
+        let m = imp.module.trim_end_matches(".rb");
+        if m.starts_with('.') {
+            return self.file(dir.join(format!("{m}.rb")), importer).into_iter().collect();
+        }
+        self.by_stem.get(m).map(|v| self.nearest(importer, v)).unwrap_or_default()
+    }
+
+    /// `require 'lib/x.php'` (a path from the file, or below an include path, matched by its end) and
+    /// `use App\Models\User` (the namespace as a path, matched by its end like a PSR-4 autoload).
+    fn php(&self, importer: usize, dir: &Path, imp: &Import) -> Vec<usize> {
+        let m = &imp.module;
+        if m.ends_with(".php") || m.ends_with(".inc") || m.starts_with('.') {
+            if m.starts_with('.') {
+                return self.file(dir.join(m), importer).into_iter().collect();
+            }
+            return self.by_name.get(m.as_str()).map(|v| self.nearest(importer, v)).unwrap_or_default();
+        }
+        self.by_stem.get(m.as_str()).map(|v| self.nearest(importer, v)).unwrap_or_default()
+    }
+
     fn java(&self, importer: usize, imp: &Import) -> Vec<usize> {
         let mut segs: Vec<&str> = imp.module.split('.').collect();
         if segs.last() == Some(&"*") {
             segs.pop();
-            return self.by_dir.get(&segs.join("/")).map(|v| self.nearest(importer, v.clone())).unwrap_or_default();
+            return self.by_dir.get(&segs.join("/")).map(|v| self.nearest(importer, v)).unwrap_or_default();
         }
         // `a.b.C`, or `a.b.C.member` for static / nested imports: drop trailing parts
         while segs.len() >= 2 {
             if let Some(v) = self.by_stem.get(&segs.join("/")) {
-                return self.nearest(importer, v.clone());
+                return self.nearest(importer, v);
             }
             segs.pop();
         }
@@ -306,7 +334,7 @@ impl<'a> Index<'a> {
         {
             return vec![x];
         }
-        self.by_name.get(&imp.module).map(|v| self.nearest(importer, v.clone())).unwrap_or_default()
+        self.by_name.get(&imp.module).map(|v| self.nearest(importer, v)).unwrap_or_default()
     }
 
     /// Directory a Rust file's child modules live in.
@@ -446,7 +474,7 @@ fn visibility_in(ix: &Index, files: &[DepFile]) -> Vec<HashSet<usize>> {
             }
             let parent = norm(files[i].path).parent().unwrap_or(Path::new("")).to_path_buf();
             match family(files[i].lang) {
-                3 | 4 => v.extend(ix.by_parent.get(&parent).into_iter().flatten()),
+                family::GO | family::JAVA | family::SWIFT => v.extend(ix.by_parent.get(&parent).into_iter().flatten()),
                 5 => {
                     // util.h stands for util.c next to it
                     for j in v.clone() {

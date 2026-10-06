@@ -5,19 +5,12 @@ Open work only. See [README.md](README.md) for implemented behavior and
 
 ## Storage and incremental analysis
 
-Implemented: per-file IR cache, project-results cache, graph index, queries,
-exports, triage (SARIF included). Open:
+Implemented: per-file IR cache, project-results cache, summary cache, graph
+index with per-file updates, queries, exports, triage (SARIF included). Open:
 
-- [ ] Cache function summaries; after a change, re-resolve imports and calls
-  for changed files and dependents and recompute only affected functions,
-  propagating through callers until stable (today every function is
-  re-analyzed).
-- [ ] Update stored CPG nodes and edges per changed file, including
-  cross-file `Call`, `Imports` and interprocedural `Reaching` edges (today
-  `index` replaces the whole graph).
 - [ ] Cache equivalence tests on external corpora: cold, warm and edited-tree
-  scans must match `--no-cache` (fixtures already cover `security`, `calls`,
-  `flow`, `cfg`).
+  scans must match `--no-cache` (fixtures cover `security`, `calls`, `flow`,
+  `cfg`).
 
 ## Crypto inventory
 
@@ -25,8 +18,8 @@ Implemented: `taintless crypto` and the `crypto-*-from-input` rules (see the
 [guide](docs/guide.md#crypto-inventory) and
 [limitations](docs/limitations.md)). Open:
 
-- [ ] Languages: PHP, Ruby, Swift (grammar plus a `Spec`; see
-  `src/lang/csharp.rs`).
+- [ ] Widen `tables.toml` as projects need it (Ruby, PHP and Swift have the
+  basics).
 
 ## Deliberate limits
 

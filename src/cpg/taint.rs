@@ -24,7 +24,7 @@
 use super::graph::{Cpg, EdgeKind};
 use super::node::NodeKind;
 use crate::analysis::rules::{
-    ArgSel, Mode, RuleSet, ignores_env_sources, is_env_source, matches, rules_for, wild,
+    ArgSel, Mode, RuleSet, ignores_env_sources, matches, rules_for, wild,
 };
 use crate::analysis::{Finding, Severity};
 use crate::lang::common::normalize_callee;
@@ -76,7 +76,7 @@ impl TaintFlow {
 fn is_path(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '[' | ']' | '\'' | '"'))
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '@' | '[' | ']' | '\'' | '"'))
 }
 
 /// The class a method belongs to: its qualified name without the last segment.
@@ -214,7 +214,7 @@ impl<'a> Solver<'a> {
             }
             _ => None,
         };
-        desc.is_some_and(|d| !(self.skip_env && is_env_source(&d)))
+        desc.is_some_and(|d| !(self.skip_env && self.rules(n).is_env_source(&d)))
     }
 
     fn is_sanitizer(&self, n: NodeIndex) -> bool {

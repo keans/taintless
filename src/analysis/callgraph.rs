@@ -334,12 +334,14 @@ impl Resolver {
         // 4. constructing an object by its class name: `Job(..)` -> `Job.__init__`,
         //    `new Svc(..)` -> `Svc.Svc`, `new S()` -> `S.constructor`
         if c.is_empty() {
-            let l = last_segment(callee);
-            for ctor in [format!("{l}.__init__"), format!("{l}.constructor"), format!("{l}.{l}")] {
+            let l = constructed_class(callee);
+            for ctor in CONSTRUCTORS.iter().map(|c| format!("{l}.{c}")).chain([format!("{l}.{l}")]) {
                 if let Some(v) = self.by_suffix.get(&ctor).map(same) {
                     c.extend(v);
                 }
             }
+            // `Job.new(..)` names the class, so the constructor it finds is not a guess
+            exact |= !c.is_empty() && l != last_segment(callee);
         }
         if c.len() > 1 {
             let local: Vec<usize> = c.iter().copied().filter(|&n| self.file_of[n] == caller_file).collect();
@@ -362,6 +364,25 @@ impl Resolver {
     }
 }
 
+/// The names a language gives its constructors (Python, JS / TS, Ruby, PHP, Swift); Java-like
+/// languages name them after the class.
+const CONSTRUCTORS: &[&str] = &["__init__", "constructor", "initialize", "__construct", "init"];
+
+/// Is `simple` the name of a constructor method (or the `new` of `X.new`)?
+pub(crate) fn is_constructor_name(simple: &str) -> bool {
+    simple == "new" || CONSTRUCTORS.contains(&simple)
+}
+
+/// The class a constructor call names: `Job` for `Job(..)` and for Ruby's `Job.new(..)`.
+pub(crate) fn constructed_class(callee: &str) -> &str {
+    let mut parts = callee.rsplit(['.', ':']).filter(|p| !p.is_empty());
+    match (parts.next(), parts.next()) {
+        (Some("new"), Some(class)) => class,
+        (Some(last), _) => last,
+        _ => callee,
+    }
+}
+
 /// The class a call creates or returns: a constructor, or a function with a declared return class.
 pub(crate) fn call_class(resolver: &Resolver, fns: &[(usize, Language, &Cfg)], c: &crate::ir::CallFlow, fi: usize) -> Option<String> {
     let r = resolver.resolve(&c.callee, fi);
@@ -370,12 +391,12 @@ pub(crate) fn call_class(resolver: &Resolver, fns: &[(usize, Language, &Cfg)], c
             let f = fns[*id].2;
             let simple = simple_name(&f.name);
             let class = class_of(&f.name);
-            if let Some(cl) = class.as_ref().filter(|cl| matches!(simple, "__init__" | "constructor" | "new") || simple == simple_name(cl)) {
+            if let Some(cl) = class.as_ref().filter(|cl| is_constructor_name(simple) || simple == simple_name(cl)) {
                 return Some(cl.clone());
             }
             f.ret_type.as_deref().and_then(|t| resolver.class_named(t)).map(str::to_string)
         }
-        [] => resolver.class_named(simple_name(&c.callee)).map(str::to_string),
+        [] => resolver.class_named(constructed_class(&c.callee)).map(str::to_string),
         _ => None,
     }
 }
@@ -402,7 +423,25 @@ pub(crate) struct Types {
 
 type ClassFlow = HashMap<(usize, usize), Vec<(String, String)>>;
 
+/// `map` as sorted entries, so that it can be hashed or compared as text.
+fn sorted_entries<K: Ord + std::fmt::Debug, V: std::fmt::Debug>(map: &HashMap<K, V>) -> String {
+    let mut v: Vec<(&K, &V)> = map.iter().collect();
+    v.sort_by(|a, b| a.0.cmp(b.0));
+    format!("{v:?}")
+}
+
 impl Types {
+    /// What is known about function `f`'s variables, as text: equal text, equal results of the
+    /// analysis (for everything that depends on classes of variables).
+    pub(crate) fn fingerprint(&self, f: usize) -> String {
+        format!("{}|{}|{}", sorted_entries(&self.locals[f]), sorted_entries(&self.declared[f]), sorted_entries(&self.flow[f]))
+    }
+
+    /// What is known about classes (field types, Go interfaces), as text.
+    pub(crate) fn global_fingerprint(&self) -> String {
+        format!("{}|{}|{}", sorted_entries(&self.fields), sorted_entries(&self.iface_use), sorted_entries(&self.field_iface))
+    }
+
     pub(crate) fn infer(fns: &[(usize, Language, &Cfg)], resolver: &Resolver) -> Self {
         let cfg_of = |n: usize| fns[n].2;
         let class_of_call = |c: &crate::ir::CallFlow, fi: usize| call_class(resolver, fns, c, fi);

@@ -1,4 +1,4 @@
-use super::common::{
+use super::common::{operator_token, kids_without_comments as kids, 
     AssignParts, CallParts, Case, Ctl, ExprCtl, Handler, Import, LoopKind, Spec, enclosing, first_child_of_kind,
     named_children, qualify, text,
 };
@@ -11,16 +11,6 @@ const TYPES: &[&str] = &["class_declaration", "object_declaration"];
 
 fn is_type(k: &str) -> bool {
     k.ends_with("_type") || k == "type_reference"
-}
-
-fn kids<'a>(n: Node<'a>) -> Vec<Node<'a>> {
-    named_children(n).into_iter().filter(|c| !c.kind().contains("comment")).collect()
-}
-
-/// The token between the operands of a binary expression or assignment (`&&`, `?:`, `+=`).
-fn operator(src: &[u8], n: Node) -> Option<String> {
-    let mut c = n.walk();
-    n.children(&mut c).find(|k| !k.is_named() && !k.kind().chars().next().is_some_and(char::is_alphabetic) && k.kind() != "(" && k.kind() != ")").map(|k| text(src, k))
 }
 
 /// The statements of a lambda: everything after its parameters.
@@ -323,13 +313,13 @@ impl Spec for Kotlin {
     }
 
     fn binary_op(&self, src: &[u8], n: Node) -> Option<String> {
-        (n.kind() == "binary_expression").then(|| operator(src, n)).flatten()
+        (n.kind() == "binary_expression").then(|| operator_token(src, n, false)).flatten()
     }
 
     fn assignment<'a>(&self, src: &[u8], n: Node<'a>) -> Option<AssignParts<'a>> {
         match n.kind() {
             "assignment" => {
-                let op = operator(src, n).unwrap_or_default();
+                let op = operator_token(src, n, false).unwrap_or_default();
                 Some(AssignParts { targets: vec![n.child_by_field_name("left")?], values: n.child_by_field_name("right").into_iter().collect(), augmented: op != "=" })
             }
             // `val x: T = value`, `val (a, b) = pair`
@@ -366,7 +356,7 @@ impl Spec for Kotlin {
             }
             "when_expression" | "try_expression" => Some(ExprCtl::Stmt),
             "binary_expression" => {
-                let and = match operator(src, n)?.as_str() {
+                let and = match operator_token(src, n, false)?.as_str() {
                     "&&" => true,
                     "||" | "?:" => false,
                     _ => return None,

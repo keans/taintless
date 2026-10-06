@@ -331,6 +331,8 @@ fn source_of(l: &Loaded) -> std::io::Result<String> {
 }
 
 type Parsed = (PathBuf, Result<(Language, String, store::FileFacts)>);
+/// A file's facts key, with the encoded facts when they are new (`None`: they came from the cache).
+type FactSource = (String, Option<Vec<u8>>);
 
 struct Pipeline {
     store: Option<store::Store>,
@@ -490,7 +492,7 @@ fn load(path: &Path, cache: Option<&Path>, configs: Option<&[PathBuf]>) -> Resul
     let caching = store.is_some();
     let bar = stage_bar(prepared.len(), "analyzing")?;
     // `Some((key, None))`: the facts came from the cache; `Some((key, Some(bytes)))`: they are new
-    let results: Vec<(Parsed, Option<(String, Option<Vec<u8>>)>)> = prepared
+    let results: Vec<(Parsed, Option<FactSource>)> = prepared
         .par_iter()
         .zip(stored.par_iter())
         .progress_with(bar.clone())
@@ -623,8 +625,8 @@ fn main() -> Result<()> {
                 let files = p.cpg_files(&sources);
                 let cpg = taintless::cpg::Cpg::build(&files)?;
                 let (nodes, edges) = store::graph::rows(&cpg);
-                db.replace_graph(&key, &nodes, &edges)?;
-                eprintln!("stored {} nodes and {} edges in {}", nodes.len(), edges.len(), db_path.display());
+                let (rewritten, files) = db.update_graph(&key, &nodes, &edges)?;
+                eprintln!("stored {} nodes and {} edges in {} ({rewritten} of {files} files rewritten)", nodes.len(), edges.len(), db_path.display());
             }
             p.exit_if_failed();
         }
@@ -747,13 +749,34 @@ fn main() -> Result<()> {
             let mut found: Vec<Finding> = match cached {
                 Some(f) => f,
                 None => {
-                    let f = analysis::check_project(&project, &|| bar.inc(1));
+                    // an earlier run's summaries: only what changed since is analyzed again
+                    let prior = store.as_ref().and_then(store::Store::get_summaries).and_then(|b| analysis::Persisted::decode(&b));
+                    let had_prior = prior.is_some();
+                    let analyzed = std::sync::atomic::AtomicUsize::new(0);
+                    let (f, state) = analysis::check_project_with(
+                        &project,
+                        &|| {
+                            analyzed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            bar.inc(1);
+                        },
+                        prior,
+                    );
+                    if had_prior {
+                        let (done, all) = (analyzed.load(std::sync::atomic::Ordering::Relaxed), analysis::function_count(&project));
+                        eprintln!("analyzed {done} of {all} functions ({} reused from stored summaries)", all.saturating_sub(done));
+                    }
                     // an incomplete scan is not stored: a hit must mean every file was analyzed
                     if !p.failed
                         && let Some(s) = store.as_mut()
-                        && let Err(e) = s.put_findings(&p.run_key(&config_paths), &f, p.counts.0, p.counts.1)
                     {
-                        eprintln!("warning: cache not updated: {e:#}");
+                        if let Err(e) = s.put_findings(&p.run_key(&config_paths), &f, p.counts.0, p.counts.1) {
+                            eprintln!("warning: cache not updated: {e:#}");
+                        }
+                        if let Some(bytes) = state.encode()
+                            && let Err(e) = s.put_summaries(&bytes)
+                        {
+                            eprintln!("warning: summaries not stored: {e:#}");
+                        }
                     }
                     f
                 }

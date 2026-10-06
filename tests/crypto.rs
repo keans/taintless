@@ -673,11 +673,11 @@ fn constants_built_from_parts_or_returned_by_functions() {
     assert_eq!(alg("parts.py", 19), ("sha1".into(), true));
     assert_eq!(alg("parts.py", 20), ("sha256".into(), false));
     // a part that is not a literal leaves the algorithm unresolved
-    assert_eq!(alg("parts.py", 21).1, false);
+    assert!(!alg("parts.py", 21).1);
     assert_eq!(alg("Parts.java", 11), ("MD5".into(), true));
     assert_eq!(alg("Parts.java", 12), ("SHA-1".into(), true));
     assert_eq!(alg("Parts.java", 13), ("DES/ECB/PKCS5Padding".into(), true));
-    assert_eq!(alg("Parts.java", 14).1, false);
+    assert!(!alg("Parts.java", 14).1);
 }
 
 #[test]
@@ -881,14 +881,14 @@ fn reassigned_mixed_and_keyed_objects() {
     };
     let (aes, des) = (("AES".to_string(), false), ("DES".to_string(), true));
     // a variable assigned again holds, at each call, what reaches that call
-    assert_eq!(at("objects.py", 6), [des.clone()]);
-    assert_eq!(at("objects.py", 8), [aes.clone()]);
+    assert_eq!(at("objects.py", 6), std::slice::from_ref(&des));
+    assert_eq!(at("objects.py", 8), std::slice::from_ref(&aes));
     // both branches, both list elements
     assert_eq!(at("objects.py", 16), [aes.clone(), des.clone()]);
     assert_eq!(at("objects.py", 22), [aes.clone(), des.clone()]);
     // a dictionary: the object under that key, whether in the literal or stored later
-    assert_eq!(at("objects.py", 27), [des.clone()]);
-    assert_eq!(at("objects.py", 28), [aes.clone()]);
+    assert_eq!(at("objects.py", 27), std::slice::from_ref(&des));
+    assert_eq!(at("objects.py", 28), std::slice::from_ref(&aes));
     assert_eq!(at("objects.py", 35), [des]);
     assert_eq!(at("objects.py", 36), [aes]);
     // the same in Java, and through a loop
@@ -963,4 +963,22 @@ fn rust_trait_impls_generics_and_pe_ordinals() {
     let out = common::taintless(&["--no-cache", "crypto", alone.to_str().unwrap(), "--format", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(!v["files"].as_array().unwrap().iter().any(|f| f["name"] == "EVP_md5"));
+}
+
+#[test]
+fn ruby_php_and_swift_manifests() {
+    let dir = std::env::temp_dir().join(format!("taintless-manifests-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\ngem 'rails'\ngem \"bcrypt\", '~> 3.1'\ngem 'jwt'\n").unwrap();
+    std::fs::write(dir.join("composer.json"), r#"{"require": {"php": ">=8.1", "firebase/php-jwt": "^6.0"}, "require-dev": {"phpseclib/phpseclib": "^3"}}"#).unwrap();
+    std::fs::write(dir.join("Package.swift"), "let package = Package(dependencies: [.package(url: \"https://github.com/krzyzanowskim/CryptoSwift.git\", from: \"1.8.0\")])\n").unwrap();
+    std::fs::write(dir.join("Podfile"), "target 'App' do\n  pod 'CryptoSwift'\nend\n").unwrap();
+    let out = common::taintless(&["--no-cache", "crypto", dir.to_str().unwrap(), "--format", "json"]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let libs: Vec<&str> = v["declared"].as_array().unwrap().iter().map(|l| l["library"].as_str().unwrap()).collect();
+    for want in ["bcrypt-ruby", "ruby-jwt", "firebase/php-jwt", "phpseclib", "CryptoSwift"] {
+        assert!(libs.contains(&want), "{want} in {libs:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Bump when the stored layout or the meaning of the stored facts changes.
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 
 /// Schema version plus a hash of the sources this binary was built from (see `build.rs`):
 /// any change to the analysis code invalidates every stored result.
@@ -103,7 +103,7 @@ impl Store {
         let stamp = stamp();
         if store.meta("stamp")?.as_deref() != Some(stamp.as_str()) {
             // other code may have written other columns: start the result tables afresh
-            store.conn.execute_batch("DROP TABLE IF EXISTS facts; DROP TABLE IF EXISTS results; DROP TABLE IF EXISTS edges; DROP TABLE IF EXISTS nodes; DELETE FROM meta WHERE key = 'graph_key';")?;
+            store.conn.execute_batch("DROP TABLE IF EXISTS facts; DROP TABLE IF EXISTS results; DROP TABLE IF EXISTS edges; DROP TABLE IF EXISTS nodes; DROP TABLE IF EXISTS file_graph; DROP TABLE IF EXISTS summaries; DELETE FROM meta WHERE key = 'graph_key';")?;
             store.conn.execute("INSERT OR REPLACE INTO meta VALUES ('stamp', ?1)", [stamp])?;
         }
         store.conn.execute_batch(
@@ -112,7 +112,11 @@ impl Store {
              CREATE TABLE IF NOT EXISTS nodes (
                  id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT, code TEXT NOT NULL, file TEXT NOT NULL,
                  line INTEGER NOT NULL, col INTEGER NOT NULL, method TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS edges (src TEXT NOT NULL, dst TEXT NOT NULL, kind TEXT NOT NULL, label TEXT, var TEXT, ord INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS edges (src TEXT NOT NULL, dst TEXT NOT NULL, kind TEXT NOT NULL, label TEXT, var TEXT, ord INTEGER NOT NULL, file TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS file_graph (file TEXT PRIMARY KEY, hash TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS summaries (id INTEGER PRIMARY KEY CHECK (id = 1), payload BLOB NOT NULL);
+             CREATE INDEX IF NOT EXISTS edges_file ON edges (file);
+             CREATE INDEX IF NOT EXISTS nodes_file ON nodes (file);
              CREATE INDEX IF NOT EXISTS edges_src ON edges (kind, src);
              CREATE INDEX IF NOT EXISTS edges_dst ON edges (kind, dst);
              CREATE INDEX IF NOT EXISTS nodes_name ON nodes (kind, name);",
@@ -141,7 +145,7 @@ impl Store {
 
     /// Drop every stored result and the stored graph; the findings history stays.
     pub fn clear(&self) -> Result<()> {
-        self.conn.execute_batch("DELETE FROM facts; DELETE FROM results; DELETE FROM edges; DELETE FROM nodes; DELETE FROM meta WHERE key = 'graph_key';")?;
+        self.conn.execute_batch("DELETE FROM facts; DELETE FROM results; DELETE FROM edges; DELETE FROM nodes; DELETE FROM file_graph; DELETE FROM summaries; DELETE FROM meta WHERE key = 'graph_key';")?;
         Ok(())
     }
 
@@ -178,6 +182,17 @@ impl Store {
         }
         let _ = self.conn.execute("UPDATE results SET used = ?2 WHERE key = ?1", params![key, self.run]);
         Some((stored.findings, stored.files, stored.functions))
+    }
+
+    /// The summaries an earlier analysis left (see `analysis::Persisted`), as bytes.
+    pub fn get_summaries(&self) -> Option<Vec<u8>> {
+        self.conn.query_row("SELECT payload FROM summaries WHERE id = 1", [], |r| r.get(0)).optional().ok()?
+    }
+
+    /// Keep the summaries of the latest analysis, replacing the earlier ones.
+    pub fn put_summaries(&mut self, payload: &[u8]) -> Result<()> {
+        self.conn.execute("INSERT OR REPLACE INTO summaries VALUES (1, ?1)", [payload])?;
+        Ok(())
     }
 
     /// Store a run's findings with the inputs it read, replacing any earlier run of the

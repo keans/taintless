@@ -112,12 +112,6 @@ pub fn ignores_env_sources(rule_id: &str) -> bool {
     matches!(rule_id, "path-traversal" | "ssrf" | "open-redirect" | "xss" | "crypto-algorithm-from-input" | "crypto-key-from-input" | "crypto-iv-from-input")
 }
 
-/// Whether a source description names an environment-like origin.
-pub fn is_env_source(desc: &str) -> bool {
-    let d = desc.to_ascii_lowercase();
-    ["getenv", "environ", "env.var", "lookupenv", "process.env", "getproperty"].iter().any(|p| d.contains(p))
-}
-
 /// A function whose parameters carry untrusted data (a request handler, ...).
 #[derive(Clone, Copy)]
 pub struct Entry {
@@ -146,6 +140,9 @@ pub struct RuleSet {
     pub source_calls: &'static [&'static str],
     /// Variables / member paths that hold untrusted data.
     pub source_paths: &'static [&'static str],
+    /// Lowercase fragments of the sources above that read the environment
+    /// (`getenv`); `=x` matches only `x`. See [`ignores_env_sources`].
+    pub env_sources: &'static [&'static str],
     /// Calls whose result is safe regardless of their arguments.
     pub sanitizers: &'static [&'static str],
     /// Custom explanations for configured sources: `(is a call pattern, pattern, message)`.
@@ -193,6 +190,11 @@ fn path_matches(pattern: &str, path: &str) -> bool {
 }
 
 impl RuleSet {
+    /// Whether a source description names an environment-like origin.
+    pub fn is_env_source(&self, desc: &str) -> bool {
+        let d = desc.to_ascii_lowercase();
+        self.env_sources.iter().any(|p| p.strip_prefix('=').map_or_else(|| d.contains(p), |x| d == x))
+    }
     pub fn is_source_call(&self, callee: &str) -> bool {
         self.source_calls.iter().any(|p| matches(p, callee))
     }
@@ -220,12 +222,15 @@ fn builtin(lang: Language) -> &'static RuleSet {
         Language::Rust => &RUST,
         Language::C | Language::Cpp => &C_FAMILY,
         Language::CSharp => &CSHARP,
+        Language::Ruby => &RUBY,
+        Language::Php => &PHP,
+        Language::Swift => &SWIFT,
     }
 }
 
 /// Every built-in rule of every language (prototypes for configured sinks).
 pub fn all_rules() -> impl Iterator<Item = &'static CallRule> {
-    [&PYTHON, &JAVASCRIPT, &JAVA, &GO, &RUST, &C_FAMILY, &CSHARP].into_iter().flat_map(|r| r.rules.iter())
+    [&PYTHON, &JAVASCRIPT, &JAVA, &GO, &RUST, &C_FAMILY, &CSHARP, &RUBY, &PHP, &SWIFT].into_iter().flat_map(|r| r.rules.iter())
 }
 
 /// The rules for `lang`: the built-in ones plus those from the installed configuration.
@@ -276,6 +281,7 @@ fn with_crypto(base: &'static RuleSet, fam: u8) -> &'static RuleSet {
             rules: Box::leak(rules.into_boxed_slice()),
             source_calls: base.source_calls,
             source_paths: base.source_paths,
+            env_sources: base.env_sources,
             sanitizers: base.sanitizers,
             source_notes: base.source_notes,
         }))
@@ -367,6 +373,7 @@ static PYTHON: RuleSet = RuleSet {
         "sys.argv", "os.environ", "request.args", "request.form", "request.values", "request.json",
         "request.data", "request.cookies", "request.headers", "request.GET", "request.POST", "request.body",
     ],
+    env_sources: &["getenv", "environ"],
     sanitizers: &[
         "int", "float", "bool", "len", "shlex.quote", "html.escape", "markupsafe.escape", "escape",
         "re.escape", "os.path.basename", "secure_filename", "urllib.parse.quote", "quote", "bleach.clean",
@@ -434,6 +441,7 @@ static JAVASCRIPT: RuleSet = RuleSet {
         "req.cookies", "request.body", "request.query", "request.params", "location.search",
         "location.hash", "location.href", "document.cookie", "document.referrer", "window.name",
     ],
+    env_sources: &["process.env"],
     sanitizers: &[
         "parseInt", "parseFloat", "Number", "Boolean", "encodeURIComponent", "encodeURI", "escape",
         "path.basename", "validator.escape", "DOMPurify.sanitize", "sanitizeHtml", "escapeHtml",
@@ -527,11 +535,305 @@ static CSHARP: RuleSet = RuleSet {
         "HttpContext.Request.Query", "HttpContext.Request.Form", "HttpContext.Request.Headers",
         "HttpContext.Request.Cookies", "context.Request.Query", "context.Request.Form",
     ],
+    env_sources: &["getenv"],
     sanitizers: &[
         "int.Parse", "int.TryParse", "Int32.Parse", "Int32.TryParse", "long.Parse", "Int64.Parse", "Convert.ToInt32",
         "Convert.ToInt64", "Guid.Parse", "Guid.TryParse", "Path.GetFileName", "HttpUtility.HtmlEncode",
         "WebUtility.HtmlEncode", "HtmlEncoder.Default.Encode", "Uri.EscapeDataString", "Regex.Escape",
         "AntiXssEncoder.HtmlEncode", "HttpUtility.UrlEncode", "WebUtility.UrlEncode",
+    ],
+};
+
+static RUBY: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        cmd("system"),
+        cmd("exec"),
+        cmd("spawn"),
+        cmd("Kernel.system"),
+        cmd("Kernel.exec"),
+        cmd("Kernel.spawn"),
+        cmd("Process.spawn"),
+        cmd("IO.popen"),
+        cmd("PTY.spawn"),
+        cmd("Open3.capture2"),
+        cmd("Open3.capture2e"),
+        cmd("Open3.capture3"),
+        cmd("Open3.popen2"),
+        cmd("Open3.popen2e"),
+        cmd("Open3.popen3"),
+        cmd("Open3.pipeline"),
+        code("eval"),
+        code("Kernel.eval"),
+        code("instance_eval"),
+        code("class_eval"),
+        code("module_eval"),
+        code("*.instance_eval"),
+        code("*.class_eval"),
+        code("*.module_eval"),
+        code("ERB.new"),
+        sql("*.execute"),
+        sql("*.exec_query"),
+        sql("*.find_by_sql"),
+        sql("*.select_all"),
+        sql("*.select_rows"),
+        sql("*.select_value"),
+        sql("*.select_one"),
+        sql("*.exec"),
+        sql("*.query"),
+        path("File.read"),
+        path("File.binread"),
+        path("File.readlines"),
+        path("File.foreach"),
+        path("File.open"),
+        path("File.new"),
+        path("File.write"),
+        path("File.binwrite"),
+        path("File.delete"),
+        path("File.unlink"),
+        path("File.rename"),
+        path("IO.read"),
+        path("IO.readlines"),
+        path("IO.write"),
+        path("FileUtils.rm"),
+        path("FileUtils.rm_rf"),
+        path("FileUtils.rm_r"),
+        path("FileUtils.cp"),
+        path("FileUtils.mv"),
+        path("FileUtils.mkdir_p"),
+        path("Dir.glob"),
+        path("Dir.entries"),
+        path("Dir.children"),
+        path("Dir.mkdir"),
+        path("send_file"),
+        path("send_data"),
+        ssrf("Net.HTTP.get"),
+        ssrf("Net.HTTP.get_response"),
+        ssrf("Net.HTTP.get_print"),
+        ssrf("Net.HTTP.post"),
+        ssrf("Net.HTTP.post_form"),
+        ssrf("Net.HTTP.start"),
+        ssrf("Net.HTTP.new"),
+        ssrf("URI.open"),
+        ssrf("HTTParty.get"),
+        ssrf("HTTParty.post"),
+        ssrf("RestClient.get"),
+        ssrf("RestClient.post"),
+        ssrf("Faraday.get"),
+        ssrf("Faraday.post"),
+        ssrf("Typhoeus.get"),
+        ssrf("OpenURI.open_uri"),
+        redirect("redirect_to"),
+        redirect("*.redirect"),
+        xss("raw"),
+        xss("*.html_safe"),
+        xss("render_to_string"),
+        deser("Marshal.load"),
+        deser("Marshal.restore"),
+        deser("YAML.load"),
+        deser("YAML.unsafe_load"),
+        deser("Psych.load"),
+        deser("Psych.unsafe_load"),
+        deser("Oj.load"),
+        deser("JSON.load"),
+        weak_hash("Digest.MD5.hexdigest"),
+        weak_hash("Digest.MD5.digest"),
+        weak_hash("Digest.MD5.base64digest"),
+        weak_hash("Digest.MD5.new"),
+        weak_hash("Digest.SHA1.hexdigest"),
+        weak_hash("Digest.SHA1.digest"),
+        weak_hash("Digest.SHA1.base64digest"),
+        weak_hash("Digest.SHA1.new"),
+        weak_hash("OpenSSL.Digest.MD5.new"),
+        weak_hash("OpenSSL.Digest.SHA1.new"),
+    ],
+    source_calls: &[
+        "gets", "readline", "readlines", "Kernel.gets", "STDIN.gets", "STDIN.read", "STDIN.readline", "STDIN.readlines", "$stdin.gets",
+        "$stdin.read", "ARGF.read", "ARGF.gets", "ENV.fetch", "request.body.read", "request.raw_post", "request.query_string",
+    ],
+    source_paths: &[
+        "gets", "readline", "readlines", "params", "ARGV", "ENV", "cookies", "request.params", "request.query_parameters", "request.request_parameters",
+        "request.headers", "request.env", "request.cookies", "request.GET", "request.POST", "request.path", "request.url",
+    ],
+    env_sources: &["env.fetch", "=env"],
+    sanitizers: &[
+        "Shellwords.escape", "Shellwords.shellescape", "*.shellescape", "ERB.Util.html_escape", "ERB.Util.h", "CGI.escapeHTML",
+        "CGI.escape", "html_escape", "h", "sanitize", "*.sanitize", "File.basename", "Integer", "Float", "*.to_i", "*.to_f",
+        "URI.encode_www_form_component", "Regexp.escape", "Rack.Utils.escape_html",
+    ],
+};
+
+static PHP: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        cmd("system"),
+        cmd("exec"),
+        cmd("shell_exec"),
+        cmd("passthru"),
+        cmd("popen"),
+        cmd("proc_open"),
+        cmd("pcntl_exec"),
+        code("eval"),
+        code("assert"),
+        code("create_function"),
+        code("include"),
+        code("include_once"),
+        code("require"),
+        code("require_once"),
+        code("call_user_func"),
+        code("call_user_func_array"),
+        tainted("preg_replace", "code-injection", "CWE-95", High, "pattern with the `e` modifier from untrusted input").at(0),
+        sql("mysql_query"),
+        sql("mysqli_query").at(1),
+        sql("mysqli_multi_query").at(1),
+        sql("mysqli_real_query").at(1),
+        sql("pg_query").at(1),
+        sql("pg_send_query").at(1),
+        sql("sqlite_query"),
+        sql("*.query"),
+        sql("*.exec"),
+        sql("*.multi_query"),
+        sql("*.real_query"),
+        sql("*.unprepared"),
+        sql("*.whereRaw"),
+        sql("*.selectRaw"),
+        sql("*.orderByRaw"),
+        sql("DB.raw"),
+        sql("DB.select"),
+        sql("DB.statement"),
+        path("file_get_contents"),
+        path("file_put_contents"),
+        path("fopen"),
+        path("readfile"),
+        path("file"),
+        path("unlink"),
+        path("copy"),
+        path("rename"),
+        path("mkdir"),
+        path("rmdir"),
+        path("scandir"),
+        path("opendir"),
+        path("glob"),
+        path("fpassthru"),
+        path("highlight_file"),
+        path("show_source"),
+        path("move_uploaded_file").at(1),
+        path("SplFileObject"),
+        ssrf("curl_init"),
+        ssrf("fsockopen"),
+        ssrf("get_headers"),
+        ssrf("Http.get"),
+        ssrf("Http.post"),
+        ssrf("*.request"),
+        redirect("header"),
+        redirect("*.redirect"),
+        redirect("redirect"),
+        xss("echo"),
+        xss("print"),
+        xss("printf"),
+        xss("print_r"),
+        xss("vprintf"),
+        deser("unserialize"),
+        deser("maybe_unserialize"),
+        weak_hash("md5"),
+        weak_hash("sha1"),
+        weak_hash("md5_file"),
+        weak_hash("sha1_file"),
+        weak_hash("crc32"),
+    ],
+    source_calls: &[
+        "getenv", "readline", "fgets", "fgetc", "fread", "filter_input", "filter_input_array", "getallheaders", "apache_request_headers", "stream_get_contents",
+    ],
+    source_paths: &[
+        "$_GET", "$_POST", "$_REQUEST", "$_COOKIE", "$_FILES", "$_SERVER", "$_ENV", "$argv", "$HTTP_RAW_POST_DATA", "STDIN",
+    ],
+    env_sources: &["getenv", "$_env"],
+    sanitizers: &[
+        "intval", "floatval", "absint", "boolval", "htmlspecialchars", "htmlentities", "escapeshellarg", "escapeshellcmd", "basename",
+        "urlencode", "rawurlencode", "addslashes", "mysqli_real_escape_string", "mysql_real_escape_string", "pg_escape_string", "*.real_escape_string",
+        "*.quote", "*.escape_string", "filter_var", "strip_tags", "ctype_digit", "esc_html", "esc_attr", "esc_url", "sanitize_text_field", "e", "Str.slug", "json_encode",
+    ],
+};
+
+static SWIFT: RuleSet = RuleSet {
+    source_notes: &[],
+    entries: &[],
+    rules: &[
+        cmd("system"),
+        cmd("popen"),
+        cmd("execl"),
+        cmd("execlp"),
+        cmd("execle"),
+        cmd("execv"),
+        cmd("execvp"),
+        cmd("execve"),
+        cmd("posix_spawn"),
+        cmd("Process.launchedProcess"),
+        cmd("NSTask.launchedTask"),
+        code("NSExpression"),
+        code("*.evaluateScript"),
+        code("*.evaluateJavaScript"),
+        sql("sqlite3_exec").at(1),
+        sql("sqlite3_prepare").at(1),
+        sql("sqlite3_prepare_v2").at(1),
+        sql("sqlite3_prepare_v3").at(1),
+        sql("*.execute"),
+        sql("*.executeQuery"),
+        sql("*.executeUpdate"),
+        sql("*.prepare"),
+        sql("*.scalar"),
+        sql("*.fetchAll"),
+        path("FileManager.default.contents"),
+        path("FileManager.default.removeItem"),
+        path("FileManager.default.createFile"),
+        path("FileManager.default.copyItem"),
+        path("FileManager.default.moveItem"),
+        path("FileManager.default.contentsOfDirectory"),
+        path("FileManager.default.createDirectory"),
+        path("*.removeItem"),
+        path("*.copyItem"),
+        path("*.moveItem"),
+        path("*.contentsOfDirectory"),
+        path("fopen"),
+        path("NSData.contentsOfFile"),
+        path("NSString.contentsOfFile"),
+        path("InputStream"),
+        path("OutputStream"),
+        ssrf("URL"),
+        ssrf("URLRequest"),
+        ssrf("NSURL"),
+        ssrf("*.dataTask"),
+        ssrf("*.downloadTask"),
+        ssrf("*.uploadTask"),
+        redirect("*.redirect"),
+        xss("*.loadHTMLString"),
+        xss("*.loadHTML"),
+        deser("NSKeyedUnarchiver.unarchiveObject"),
+        deser("NSKeyedUnarchiver.unarchiveTopLevelObjectWithData"),
+        weak_hash("CC_MD5"),
+        weak_hash("CC_SHA1"),
+        weak_hash("Insecure.MD5.hash"),
+        weak_hash("Insecure.SHA1.hash"),
+        weak_hash("Insecure.MD5"),
+        weak_hash("Insecure.SHA1"),
+        weak_hash("*.md5"),
+        weak_hash("*.sha1"),
+    ],
+    source_calls: &[
+        "readLine", "CommandLine.arguments", "FileHandle.standardInput.readLine", "FileHandle.standardInput.readDataToEndOfFile", "UIPasteboard.general.string",
+        "ProcessInfo.processInfo.environment", "ProcessInfo.processInfo.arguments", "UserDefaults.standard.string",
+    ],
+    source_paths: &[
+        "CommandLine.arguments", "ProcessInfo.processInfo.environment", "ProcessInfo.processInfo.arguments", "req.query", "req.content",
+        "req.parameters", "req.body", "req.headers", "request.query", "request.parameters", "request.body", "request.headers",
+        "UIPasteboard.general.string",
+    ],
+    env_sources: &["processinfo.processinfo.environment"],
+    sanitizers: &[
+        "Int", "Double", "Float", "UInt", "*.addingPercentEncoding", "*.htmlEscaped", "*.escapingHTML", "*.sanitized",
+        "URL.fileURLWithPath", "*.lastPathComponent", "*.standardizingPath", "NSRegularExpression.escapedPattern",
     ],
 };
 
@@ -578,6 +880,7 @@ static JAVA: RuleSet = RuleSet {
         "readLine", "readln", "readlnOrNull", "System.`in`.bufferedReader.readLine",
     ],
     source_paths: &[],
+    env_sources: &["getenv", "getproperty"],
     sanitizers: &[
         "Integer.parseInt", "Long.parseLong", "Integer.valueOf", "Double.parseDouble",
         "Boolean.parseBoolean", "URLEncoder.encode", "*.escapeHtml4", "*.escapeHtml", "*.encodeForHTML",
@@ -625,6 +928,7 @@ static GO: RuleSet = RuleSet {
         "*.Cookie", "*.ReadString", "*.ReadLine", "flag.Arg",
     ],
     source_paths: &["os.Args", "URL.Path", "URL.RawQuery", "Form", "PostForm"],
+    env_sources: &["getenv", "lookupenv"],
     sanitizers: &[
         "strconv.Atoi", "strconv.ParseInt", "strconv.ParseUint", "strconv.ParseFloat", "strconv.ParseBool",
         "strconv.Quote", "filepath.Base", "path.Base", "html.EscapeString", "url.QueryEscape",
@@ -662,6 +966,7 @@ static RUST: RuleSet = RuleSet {
         "env.args", "env.var", "env.args_os", "*.read_line", "*.read_to_string", "*.read_to_end",
     ],
     source_paths: &[],
+    env_sources: &["env.var"],
     sanitizers: &["*.parse", "*.canonicalize", "html_escape.encode_text", "shell_escape.escape"],
 };
 
@@ -705,5 +1010,6 @@ static C_FAMILY: RuleSet = RuleSet {
         "getline", "readline", "std.getline",
     ],
     source_paths: &["argv"],
+    env_sources: &["getenv"],
     sanitizers: &["atoi", "atol", "atoll", "atof", "strtol", "strtoul", "strtod", "strtoll", "basename"],
 };

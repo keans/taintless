@@ -4,13 +4,30 @@ pub mod csharp;
 pub mod go;
 pub mod java;
 pub mod js;
+pub mod php;
 pub mod kotlin;
 pub mod python;
+pub mod ruby;
 pub mod rust;
+pub mod swift;
 
 use crate::ir::Cfg;
 use anyhow::Result;
 use std::path::Path;
+
+/// The numbers of [`Language::family`], by name.
+pub mod family {
+    pub const PYTHON: u8 = 0;
+    pub const JAVASCRIPT: u8 = 1;
+    pub const RUST: u8 = 2;
+    pub const GO: u8 = 3;
+    pub const JAVA: u8 = 4;
+    pub const C: u8 = 5;
+    pub const CSHARP: u8 = 6;
+    pub const RUBY: u8 = 7;
+    pub const PHP: u8 = 8;
+    pub const SWIFT: u8 = 9;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -25,6 +42,9 @@ pub enum Language {
     Cpp,
     CSharp,
     Kotlin,
+    Ruby,
+    Php,
+    Swift,
 }
 
 impl Language {
@@ -37,13 +57,16 @@ impl Language {
     /// JavaScript, C with C++, Kotlin with Java); everything else is a separate world.
     pub fn family(self) -> u8 {
         match self {
-            Self::Python => 0,
-            Self::JavaScript | Self::TypeScript | Self::Tsx => 1,
-            Self::Rust => 2,
-            Self::Go => 3,
-            Self::Java | Self::Kotlin => 4,
-            Self::C | Self::Cpp => 5,
-            Self::CSharp => 6,
+            Self::Python => family::PYTHON,
+            Self::JavaScript | Self::TypeScript | Self::Tsx => family::JAVASCRIPT,
+            Self::Rust => family::RUST,
+            Self::Go => family::GO,
+            Self::Java | Self::Kotlin => family::JAVA,
+            Self::C | Self::Cpp => family::C,
+            Self::CSharp => family::CSHARP,
+            Self::Ruby => family::RUBY,
+            Self::Php => family::PHP,
+            Self::Swift => family::SWIFT,
         }
     }
 
@@ -70,6 +93,9 @@ impl Language {
             "cpp" | "c++" => Self::Cpp,
             "csharp" | "c#" | "cs" => Self::CSharp,
             "kotlin" | "kt" => Self::Kotlin,
+            "ruby" | "rb" => Self::Ruby,
+            "php" => Self::Php,
+            "swift" => Self::Swift,
             _ => return None,
         })
     }
@@ -87,6 +113,9 @@ impl Language {
             "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Self::Cpp,
             "cs" => Self::CSharp,
             "kt" | "kts" => Self::Kotlin,
+            "rb" | "rake" | "gemspec" => Self::Ruby,
+            "php" | "phtml" | "php3" | "php4" | "php5" | "php7" | "phps" | "inc" => Self::Php,
+            "swift" => Self::Swift,
             _ => return None,
         })
     }
@@ -107,6 +136,9 @@ macro_rules! with_grammar {
             Language::Cpp => { let ($spec, $g) = (&c::CLike, tree_sitter_cpp::LANGUAGE.into()); $body }
             Language::CSharp => { let ($spec, $g) = (&csharp::CSharp, tree_sitter_c_sharp::LANGUAGE.into()); $body }
             Language::Kotlin => { let ($spec, $g) = (&kotlin::Kotlin, tree_sitter_kotlin_ng::LANGUAGE.into()); $body }
+            Language::Ruby => { let ($spec, $g) = (&ruby::Ruby, tree_sitter_ruby::LANGUAGE.into()); $body }
+            Language::Php => { let ($spec, $g) = (&php::Php, tree_sitter_php::LANGUAGE_PHP.into()); $body }
+            Language::Swift => { let ($spec, $g) = (&swift::Swift, tree_sitter_swift::LANGUAGE.into()); $body }
         }
     };
 }

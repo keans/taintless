@@ -377,6 +377,36 @@ pub fn text(src: &[u8], n: Node) -> String {
     n.utf8_text(src).unwrap_or("").to_string()
 }
 
+/// The token between the operands of a binary expression or assignment (`&&`, `?:`, `+=`); with
+/// `words` false an alphabetic token (`as`, `is`, `in`) is not an operator.
+pub fn operator_token(src: &[u8], n: Node, words: bool) -> Option<String> {
+    let mut c = n.walk();
+    n.children(&mut c)
+        .find(|k| !k.is_named() && !matches!(k.kind(), "(" | ")") && (words || !k.kind().starts_with(char::is_alphabetic)))
+        .map(|k| text(src, k))
+}
+
+/// Call arguments with the labels they were written with; none at all when no argument has one.
+pub fn unlabelled_if_none<'a>(args: Vec<Node<'a>>, mut names: Vec<Option<String>>) -> (Vec<Node<'a>>, Vec<Option<String>>) {
+    if names.iter().all(Option::is_none) {
+        names.clear();
+    }
+    (args, names)
+}
+
+/// Does `f` carry one of the `words` in its `modifiers` (`static`, `class`)?
+pub fn has_modifier(src: &[u8], f: Node, words: &[&str]) -> bool {
+    named_children(f)
+        .into_iter()
+        .filter(|c| c.kind() == "modifiers")
+        .any(|m| text(src, m).split_whitespace().any(|w| words.contains(&w)))
+}
+
+/// The named children of `n` without comments.
+pub fn kids_without_comments<'a>(n: Node<'a>) -> Vec<Node<'a>> {
+    named_children(n).into_iter().filter(|c| !c.kind().contains("comment")).collect()
+}
+
 pub fn named_children(n: Node) -> Vec<Node> {
     let mut c = n.walk();
     n.named_children(&mut c).collect()
@@ -774,7 +804,7 @@ fn nested_props<'a, S: Spec + ?Sized>(spec: &S, src: &[u8], n: Node<'a>, level: 
 
 /// The key of an element written as `t`: `[0]` for a small integer, `['k']` for a short quoted
 /// word (or, with `bare`, an unquoted one as in a JS object literal); none for anything else.
-fn element_key(t: &str, bare: bool) -> Option<String> {
+pub fn element_key(t: &str, bare: bool) -> Option<String> {
     let t = t.trim();
     if !t.is_empty() && t.len() <= 6 && t.bytes().all(|b| b.is_ascii_digit()) {
         return Some(format!("[{t}]"));

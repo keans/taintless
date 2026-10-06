@@ -1,0 +1,8 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 10, "binary_op": 3, "call": 17, "field": 1, "file": 2, "identifier": 71, "literal": 10, "local": 8, "method": 13, "method_return": 14, "other": 58, "param": 6, "return": 1, "type_decl": 1}
+edges: {"argument": 16, "ast": 190, "call": 2, "cdg": 32, "cfg": 61, "contains": 36, "imports": 1, "param_in": 1, "param_out": 1, "reaching": 28, "receiver": 6, "ref": 26, "return_out": 2, "scope": 14}
+call stored -> Runner.initialize
+call stored -> Runner.run

@@ -12,6 +12,7 @@ pub mod manifest;
 pub mod rules;
 pub mod suppress;
 pub(crate) mod taint;
+pub use taint::Persisted;
 pub(crate) mod values;
 mod unreachable;
 
@@ -142,6 +143,13 @@ pub fn function_count(files: &[ProjectFile]) -> usize {
 /// Findings are deduplicated (a `finally` body is copied onto several paths)
 /// and sorted by position.
 pub fn check_project(files: &[ProjectFile], progress: &(dyn Fn() + Sync)) -> Vec<Finding> {
+    check_project_with(files, progress, None).0
+}
+
+/// [`check_project`] starting from the state an earlier run left (see [`taint::Persisted`]): the
+/// functions whose code, environment and inputs are unchanged are not analyzed again, and `progress`
+/// is called only for those that are. Returns the findings and the state to keep for the next run.
+pub fn check_project_with(files: &[ProjectFile], progress: &(dyn Fn() + Sync), prior: Option<Persisted>) -> (Vec<Finding>, Persisted) {
     use rayon::prelude::*;
     let aliases: Vec<Option<crypto::Bindings>> = files.iter().map(|f| crypto::file_bindings(f.lang, f.file, f.imports, f.cfgs)).collect();
     let aliases = &aliases;
@@ -158,7 +166,7 @@ pub fn check_project(files: &[ProjectFile], progress: &(dyn Fn() + Sync)) -> Vec
         .map(|f| deps::DepFile { path: f.file, lang: f.lang, imports: f.imports.to_vec(), cfgs: f.cfgs })
         .collect();
     let visible = (!files.iter().all(|f| f.imports.is_empty())).then(|| deps::visibility(&dep_files));
-    let mut out = taint::analyze_project(&fns, visible, progress);
+    let (mut out, state) = taint::analyze_project(&fns, visible, progress, prior);
     out.par_extend(fns.par_iter().flat_map(|f| {
         let mut v = vec![];
         unreachable::analyze(f.cfg, f.file, &mut v);
@@ -175,10 +183,11 @@ pub fn check_project(files: &[ProjectFile], progress: &(dyn Fn() + Sync)) -> Vec
             .then(a.origin.cmp(&b.origin))
     });
     out.dedup_by(|a, b| (&a.file, a.line, a.col, a.rule, &a.function) == (&b.file, b.line, b.col, b.rule, &b.function));
-    match config::installed() {
+    let out = match config::installed() {
         Some(active) => active.filter(out),
         None => out,
-    }
+    };
+    (out, state)
 }
 
 /// Analyze a single file on its own.

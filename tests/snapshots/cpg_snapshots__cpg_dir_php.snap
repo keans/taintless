@@ -1,0 +1,9 @@
+---
+source: tests/cpg_snapshots.rs
+expression: summary(&c)
+---
+nodes: {"assign": 12, "binary_op": 3, "call": 16, "control": 2, "field": 1, "field_access": 2, "file": 2, "identifier": 113, "literal": 17, "local": 10, "method": 10, "method_return": 11, "other": 111, "param": 4, "return": 3, "type_decl": 1}
+edges: {"argument": 15, "ast": 294, "call": 3, "cdg": 32, "cfg": 47, "contains": 32, "imports": 1, "param_in": 1, "param_out": 1, "reaching": 24, "receiver": 1, "ref": 29, "return_out": 2, "scope": 11}
+call loops -> cleanup
+call stored -> Runner.__construct
+call stored -> Runner.run

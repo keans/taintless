@@ -48,3 +48,42 @@ fn index_query_and_export() {
     assert!(run(db, &["export-graph", "--format", "graphml"]).0.contains("<graphml"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_changed_file_rewrites_only_the_files_whose_rows_change() {
+    let dir = std::env::temp_dir().join(format!("taintless-graph-incr-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    write("lib.py", "def helper(x):\n    return x\n");
+    write("use.py", "from lib import helper\ndef go(v):\n    return helper(v)\n");
+    write("other.py", "def alone():\n    return 1\n");
+    let tree = dir.to_str().unwrap().to_string();
+    let db = dir.join("db.sqlite");
+    let db = db.to_str().unwrap();
+    let (_, first) = run(db, &["index", &tree]);
+    assert!(first.contains("3 of 3 files rewritten"), "{first}");
+
+    // an edit inside one function of one file that touches nothing else: only that file
+    write("other.py", "def alone():\n    return 2\n");
+    let (_, second) = run(db, &["index", &tree]);
+    assert!(second.contains("1 of 3 files rewritten"), "{second}");
+
+    // the stored graph is what a fresh index of the same tree gives
+    write("lib.py", "def helper(x, y=0):\n    return x\n\ndef extra():\n    return 3\n");
+    let (_, third) = run(db, &["index", &tree]);
+    assert!(third.contains("stored") && !third.contains("3 of 3"), "{third}");
+    let fresh = dir.join("fresh.sqlite");
+    run(fresh.to_str().unwrap(), &["index", &tree]);
+    for format in ["graphml", "dot"] {
+        let a = run(db, &["export-graph", "--format", format]).0;
+        let b = run(fresh.to_str().unwrap(), &["export-graph", "--format", format]).0;
+        assert_eq!(a, b, "{format} export differs");
+    }
+    // a removed file leaves nothing behind
+    std::fs::remove_file(dir.join("other.py")).unwrap();
+    let (_, fourth) = run(db, &["index", &tree]);
+    assert!(fourth.contains("stored"), "{fourth}");
+    assert!(run(db, &["query", "callers", "alone"]).0.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

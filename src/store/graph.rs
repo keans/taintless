@@ -1,9 +1,11 @@
 //! The code property graph as two tables, and the questions asked of them.
 //!
 //! `nodes` are keyed by the stable id of `export::cpg::stable_ids` (file, byte range, grammar
-//! kind), so ids are the same across runs and exports. The graph is replaced as a whole when the
-//! project fingerprint changes: cross-file edges (calls, imports, interprocedural data flow)
-//! depend on files other than the one they start in, so partial replacement could not be exact.
+//! kind), so ids are the same across runs and exports. When the project changes, the graph is
+//! rebuilt in memory (cross-file edges: calls, imports, interprocedural data flow, depend on files
+//! other than the one they start in, so they are recomputed from the whole project) and compared
+//! with what is stored: each file owns its nodes and the edges that start in them, and only the
+//! files whose rows differ are rewritten (see [`Store::update_graph`]).
 
 use super::Store;
 use crate::cpg::Cpg;
@@ -13,6 +15,7 @@ use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use rusqlite::params;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
 use super::PRESENT;
 use std::fmt::Write;
 
@@ -21,7 +24,7 @@ pub struct NodeRow {
     kind: &'static str,
     name: Option<String>,
     code: String,
-    file: String,
+    file: Arc<str>,
     line: i64,
     col: i64,
     /// Stable id of the enclosing method.
@@ -29,6 +32,8 @@ pub struct NodeRow {
 }
 
 pub struct EdgeRow {
+    /// The file of the node the edge starts in: the file that owns the edge.
+    file: Arc<str>,
     src: String,
     dst: String,
     kind: &'static str,
@@ -40,6 +45,7 @@ pub struct EdgeRow {
 /// The rows of `cpg`.
 pub fn rows(cpg: &Cpg) -> (Vec<NodeRow>, Vec<EdgeRow>) {
     let ids = stable_ids(cpg);
+    let paths: Vec<Arc<str>> = cpg.files.iter().map(|f| Arc::from(f.path.display().to_string())).collect();
     let nodes = cpg
         .graph
         .node_indices()
@@ -50,7 +56,7 @@ pub fn rows(cpg: &Cpg) -> (Vec<NodeRow>, Vec<EdgeRow>) {
                 kind: x.kind.as_str(),
                 name: x.name.clone(),
                 code: x.code.clone(),
-                file: cpg.files[x.file].path.display().to_string(),
+                file: paths[x.file].clone(),
                 line: x.line as i64,
                 col: x.col as i64,
                 method: ids[&cpg.enclosing_method(n)].clone(),
@@ -60,6 +66,7 @@ pub fn rows(cpg: &Cpg) -> (Vec<NodeRow>, Vec<EdgeRow>) {
     let edges = (&cpg.graph)
         .edge_references()
         .map(|e| EdgeRow {
+            file: paths[cpg.graph[e.source()].file].clone(),
             src: ids[&e.source()].clone(),
             dst: ids[&e.target()].clone(),
             kind: e.weight().kind.as_str(),
@@ -77,23 +84,90 @@ impl Store {
         self.meta("graph_key").ok().flatten()
     }
 
-    /// Replace the stored graph, in one transaction.
-    pub fn replace_graph(&mut self, key: &str, nodes: &[NodeRow], edges: &[EdgeRow]) -> Result<()> {
+    /// Make the stored graph `nodes` and `edges`, rewriting only the files whose rows changed,
+    /// in one transaction. A file's rows are its nodes and the edges that start in them, so an edge
+    /// from an untouched file to an edited one is a change of the untouched file too (its target
+    /// may be gone or new). Returns `(files rewritten, files in the graph)`.
+    pub fn update_graph(&mut self, key: &str, nodes: &[NodeRow], edges: &[EdgeRow]) -> Result<(usize, usize)> {
+        use std::collections::BTreeMap;
+        let mut by_file: BTreeMap<&str, (Vec<&NodeRow>, Vec<&EdgeRow>)> = BTreeMap::new();
+        for n in nodes {
+            by_file.entry(&*n.file).or_default().0.push(n);
+        }
+        for e in edges {
+            by_file.entry(&*e.file).or_default().1.push(e);
+        }
+        // each row hashes on its own and the row hashes are sorted, so the order of the rows does not matter
+        let digest = |(ns, es): &(Vec<&NodeRow>, Vec<&EdgeRow>)| -> String {
+            let sep = |h: &mut blake3::Hasher| {
+                h.update(b"\0");
+            };
+            let mut rows: Vec<[u8; 32]> = Vec::with_capacity(ns.len() + es.len());
+            for x in ns {
+                let mut h = blake3::Hasher::new();
+                for part in [b"n".as_slice(), x.id.as_bytes(), x.kind.as_bytes(), x.name.as_deref().unwrap_or("\u{1}").as_bytes(), x.code.as_bytes(), x.method.as_bytes()] {
+                    h.update(part);
+                    sep(&mut h);
+                }
+                h.update(&x.line.to_le_bytes()).update(&x.col.to_le_bytes());
+                rows.push(*h.finalize().as_bytes());
+            }
+            for x in es {
+                let mut h = blake3::Hasher::new();
+                for part in [b"e".as_slice(), x.src.as_bytes(), x.dst.as_bytes(), x.kind.as_bytes(), x.label.unwrap_or("\u{1}").as_bytes(), x.var.as_deref().unwrap_or("\u{1}").as_bytes()] {
+                    h.update(part);
+                    sep(&mut h);
+                }
+                h.update(&x.order.to_le_bytes());
+                rows.push(*h.finalize().as_bytes());
+            }
+            rows.sort_unstable();
+            let mut h = blake3::Hasher::new();
+            for r in &rows {
+                h.update(r);
+            }
+            h.finalize().to_hex().to_string()
+        };
         let tx = self.conn.transaction()?;
-        tx.execute_batch("DELETE FROM edges; DELETE FROM nodes;")?;
+        let stored: std::collections::HashMap<String, String> = {
+            let mut st = tx.prepare("SELECT file, hash FROM file_graph")?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        let mut rewritten = 0;
+        let mut drop_edges = tx.prepare_cached("DELETE FROM edges WHERE file = ?1")?;
+        let mut drop_nodes = tx.prepare_cached("DELETE FROM nodes WHERE file = ?1")?;
+        // files that left the project
+        for gone in stored.keys().filter(|f| !by_file.contains_key(f.as_str())) {
+            drop_edges.execute([gone])?;
+            drop_nodes.execute([gone])?;
+            tx.prepare_cached("DELETE FROM file_graph WHERE file = ?1")?.execute([gone])?;
+            rewritten += 1;
+        }
         {
             let mut n = tx.prepare("INSERT OR REPLACE INTO nodes VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")?;
-            for x in nodes {
-                n.execute(params![x.id, x.kind, x.name, x.code, x.file, x.line, x.col, x.method])?;
-            }
-            let mut e = tx.prepare("INSERT INTO edges VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?;
-            for x in edges {
-                e.execute(params![x.src, x.dst, x.kind, x.label, x.var, x.order])?;
+            let mut e = tx.prepare("INSERT INTO edges VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?;
+            for (file, rows) in &by_file {
+                let hash = digest(rows);
+                if stored.get(*file) == Some(&hash) {
+                    continue;
+                }
+                drop_edges.execute([file])?;
+                drop_nodes.execute([file])?;
+                for x in &rows.0 {
+                    n.execute(params![x.id, x.kind, x.name, x.code, &*x.file, x.line, x.col, x.method])?;
+                }
+                for x in &rows.1 {
+                    e.execute(params![x.src, x.dst, x.kind, x.label, x.var, x.order, &*x.file])?;
+                }
+                tx.execute("INSERT OR REPLACE INTO file_graph VALUES (?1, ?2)", params![file, hash])?;
+                rewritten += 1;
             }
         }
+        drop((drop_edges, drop_nodes));
         tx.execute("INSERT OR REPLACE INTO meta VALUES ('graph_key', ?1)", [key])?;
         tx.commit()?;
-        Ok(())
+        Ok((rewritten, by_file.len()))
     }
 
     /// Fail with a hint when no graph is stored.
@@ -215,7 +289,7 @@ impl Store {
             );
         }
         let mut edges = String::from(":START_ID,:END_ID,:TYPE,var,label,order:int\n");
-        let mut st = self.conn.prepare("SELECT src, dst, kind, var, label, ord FROM edges ORDER BY rowid")?;
+        let mut st = self.conn.prepare("SELECT src, dst, kind, var, label, ord FROM edges ORDER BY file, src, kind, dst, ord, var, label")?;
         let mut rows = st.query([])?;
         while let Some(r) = rows.next()? {
             let (src, dst, kind): (String, String, String) = (r.get(0)?, r.get(1)?, r.get(2)?);
@@ -268,7 +342,7 @@ impl Store {
                 r.get::<_, i64>(6)?
             );
         }
-        let mut st = self.conn.prepare("SELECT src, dst, kind, label, var, ord FROM edges ORDER BY rowid")?;
+        let mut st = self.conn.prepare("SELECT src, dst, kind, label, var, ord FROM edges ORDER BY file, src, kind, dst, ord, var, label")?;
         let mut rows = st.query([])?;
         while let Some(r) = rows.next()? {
             let _ = write!(

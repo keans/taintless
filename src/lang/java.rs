@@ -1,4 +1,4 @@
-use super::common::{
+use super::common::{has_modifier, 
     AssignParts, CallParts, Case, Ctl, ExprCtl, Handler, Import, LoopKind, Spec, bound_names,
     children_by_field, children_excluding, first_child_of_kind, named_children, qualify, text,
 };
@@ -141,11 +141,7 @@ impl Spec for Java {
             return None;
         }
         // static methods have no object
-        let is_static = named_children(f)
-            .into_iter()
-            .find(|c| c.kind() == "modifiers")
-            .is_some_and(|m| text(src, m).split_whitespace().any(|w| w == "static"));
-        (!is_static).then(|| "this".to_string())
+        (!has_modifier(src, f, &["static"])).then(|| "this".to_string())
     }
 
     fn declared_types(&self, src: &[u8], f: Node) -> (Vec<(String, String)>, Option<String>) {

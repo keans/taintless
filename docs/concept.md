@@ -43,8 +43,9 @@ that trade-off.
 
 ### Goals
 
-- **One front end for every language.** Ten languages (Python, JavaScript,
-  TypeScript/TSX, Rust, Go, Java, Kotlin, C#, C, C++) lower to the same IR.
+- **One front end for every language.** Thirteen languages (Python, JavaScript,
+  TypeScript/TSX, Rust, Go, Java, Kotlin, C#, Ruby, PHP, Swift, C, C++) lower
+  to the same IR.
   Analyses use those facts or the CPG built from them.
 - **Useful security findings at low noise.** Taint analysis that explains
   itself (source, path, sink) and can be adopted on an existing code base
@@ -349,13 +350,28 @@ project and stores a CPG for indexed queries and graph exports. Findings
 history and triage survive `clear-cache`. A build stamp invalidates analysis
 facts when the implementation changes.
 
-The remaining work is finer invalidation. After an edit, the scanner still
-recomputes all function summaries, and `index` replaces the whole graph.
-Persisted summaries could be recomputed through affected callers until they
-stabilize; changed graph rows would require cross-file `Call`, `Imports` and
-`Reaching` edges to be updated together. Cold, warm and edited-tree scans must
-match `--no-cache`; fixture tests cover this, while external-corpus tests
-remain open. See [TODO.md](../TODO.md).
+**Summaries.** After the first pass (the one that knows no tainted fields) the
+summaries and the per-group results are stored with fingerprints
+(`analysis/taint/persist.rs`). The next run starts from them as the "previous
+pass" that `run_pass` already reuses: a group of functions is not analyzed
+again when its code, its environment and everything it read are unchanged, and
+a function whose recomputed summary equals the stored one keeps its version, so
+the groups that read it stay valid. A summary that changes is recomputed in its
+callers, up the chain, until it stops changing. The environment is covered by a
+project fingerprint (the functions that exist, the class hierarchy, visibility,
+what is known of classes and of functions stored in fields; any change drops
+all stored results) and a per-function one (the classes of its variables, the
+function that created it). Configuration files read for the run are checked
+too.
+
+**Graph.** `index` builds the graph in memory from the whole project, so the
+cross-file `Call`, `Imports` and `Reaching` edges are always recomputed, and
+rewrites only the files whose rows differ from what is stored (a file owns its
+nodes and the edges that start in them).
+
+Cold, warm and edited-tree scans must match `--no-cache`; fixture tests cover
+this (`tests/incremental_summaries.rs`, `tests/graph_store.rs`), while
+external-corpus tests remain open. See [TODO.md](../TODO.md).
 
 ## 6. Deliberate limits
 

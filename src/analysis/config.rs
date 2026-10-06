@@ -257,7 +257,7 @@ pub fn family_of(name: &Option<String>) -> Result<Option<u8>> {
     let Some(n) = name else { return Ok(None) };
     match Language::from_name(n) {
         Some(l) => Ok(Some(l.family())),
-        None => bail!("unknown language `{n}` (python, javascript, typescript, rust, go, java, c, cpp, csharp, kotlin)"),
+        None => bail!("unknown language `{n}` (python, javascript, typescript, rust, go, java, c, cpp, csharp, kotlin, ruby, php, swift)"),
     }
 }
 
@@ -350,7 +350,7 @@ fn load_chain(path: &Path, seen: &mut Vec<PathBuf>) -> Result<Config> {
         bail!("{} extends itself (through {})", path.display(), seen.last().map_or(String::new(), |p| p.display().to_string()));
     }
     seen.push(canon);
-    let text = crate::inputs::note(&path, std::fs::read_to_string(&path)).with_context(|| format!("reading {}", path.display()))?;
+    let text = crate::inputs::note(path, std::fs::read_to_string(path)).with_context(|| format!("reading {}", path.display()))?;
     let mut config: Config = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut merged = Config::default();
@@ -450,6 +450,7 @@ pub(super) fn extend(base: &'static rules::RuleSet, fam: u8, cfg: &Config) -> &'
         rules: leak_slice(rule_list),
         source_calls: leak_slice(calls),
         source_paths: leak_slice(paths),
+        env_sources: base.env_sources,
         sanitizers: leak_slice(sanitizers),
         source_notes: leak_slice(notes),
     }))

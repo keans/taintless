@@ -14,7 +14,7 @@
 //! needs the whole project to be re-analyzed until no new tainted fields appear.
 
 use super::callgraph::{Resolver, Types, last_segment, simple_name};
-use super::rules::{ArgSel, CallRule, MUTATORS, Mode, RuleSet, ignores_env_sources, is_env_source, matches, wild};
+use super::rules::{ArgSel, CallRule, MUTATORS, Mode, RuleSet, ignores_env_sources, matches, wild};
 use super::Finding;
 use crate::ir::{CallFlow, Cfg, Flow, Stmt};
 use crate::cpg::cfg::SNode;
@@ -25,13 +25,16 @@ use std::path::Path;
 
 /// Where a tainted value comes from. `Param` sorts first so that when the set
 /// has to be truncated, parameters (needed for summaries) survive.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Cause {
     Param(usize),
     Source { line: usize, desc: String },
 }
 
 pub(crate) type Taint = BTreeSet<Cause>;
+mod persist;
+pub use persist::Persisted;
+
 /// The abstract state at a program point.
 #[derive(Clone, Default, PartialEq)]
 struct State {
@@ -202,7 +205,7 @@ fn store_through(st: &mut State, target: &str, t: Taint, strong: bool) {
 }
 
 /// A hit: the sink a parameter can reach, with the calls it travels through.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Hit {
     pub finding: Finding,
     pub path: Vec<String>,
@@ -212,7 +215,7 @@ pub struct Hit {
 }
 
 /// What a function does with its inputs.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Summary {
     /// Per parameter: the sinks it reaches (directly or through callees).
     pub param_sinks: Vec<Vec<Hit>>,
@@ -243,14 +246,14 @@ pub struct Summary {
 }
 
 /// What flows into one argument: parameters of the function, and real sources.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct ArgDeps {
     pub params: BTreeSet<usize>,
     pub sources: BTreeSet<(usize, String)>,
 }
 
 /// `fn(x, 1)` where `fn` is a parameter: the function passed in is called with these arguments.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct CallbackUse {
     pub param: usize,
     pub args: Vec<ArgDeps>,
@@ -287,7 +290,7 @@ pub struct FnInfo<'a> {
 
 /// What one analysis of a function looked at besides its own code, with the values it saw.
 /// Analyzing it again gives the same result as long as all of them still hold.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Reads {
     /// Summaries of other functions, by version (see `run_pass`; 0: not computed yet).
     summaries: Vec<(usize, u64)>,
@@ -296,8 +299,11 @@ struct Reads {
     /// All fields of a class (a closure's captured scope).
     classes: Vec<(String, Vec<(String, Taint)>)>,
     /// Sinks closures found for the parameters of a function.
-    outer: Vec<(usize, Option<Vec<(usize, Hit)>>)>,
+    outer: Vec<(usize, OuterRead)>,
 }
+
+/// What a closure's sinks were when read: `None` when there is no entry.
+type OuterRead = Option<Vec<(usize, Hit)>>;
 
 impl Reads {
     fn still_hold(&self, versions: &[u64], fields: &FieldTaint, outer: &OuterHits) -> bool {
@@ -582,7 +588,7 @@ impl Env<'_> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct FnResult {
     findings: Vec<Finding>,
     summary: Summary,
@@ -761,7 +767,7 @@ impl Analyzer<'_> {
         let r = self.resolve(c, st);
         if r.ids.is_empty() {
             // a class without a constructor of its own: `Runner()`, `new Runner()`
-            let simple = last_segment(&c.callee);
+            let simple = super::callgraph::constructed_class(&c.callee);
             return self.env.classes.get(simple).map(|cls| (cls.clone(), None));
         }
         let (&id, true) = (r.ids.first()?, r.exact && r.ids.len() == 1) else { return None };
@@ -769,7 +775,7 @@ impl Analyzer<'_> {
         let simple = simple_name(name);
         if let Some(class) = class_of(name) {
             let class_simple = simple_name(class);
-            if matches!(simple, "__init__" | "constructor" | "new") || simple == class_simple {
+            if super::callgraph::is_constructor_name(simple) || simple == class_simple {
                 return Some((class.to_string(), Some(id)));
             }
         }
@@ -1189,7 +1195,7 @@ impl Analyzer<'_> {
                 };
                 let skip_env = ignores_env_sources(rule.id);
                 let source = taint.iter().find_map(|k| match k {
-                    Cause::Source { line, desc } if !(skip_env && is_env_source(desc)) => Some((*line, desc.clone())),
+                    Cause::Source { line, desc } if !(skip_env && self.rules().is_env_source(desc)) => Some((*line, desc.clone())),
                     _ => None,
                 });
                 let severity = if always && !taint.is_empty() { rule.severity.escalate() } else { rule.severity };
@@ -1351,7 +1357,7 @@ impl Analyzer<'_> {
                 let mut path = vec![step.to_string()];
                 path.extend(h.path.iter().cloned());
                 match cause {
-                    Cause::Source { desc, .. } if ignores_env_sources(h.finding.rule) && is_env_source(desc) => {}
+                    Cause::Source { desc, .. } if ignores_env_sources(h.finding.rule) && self.rules().is_env_source(desc) => {}
                     Cause::Source { line, desc } => {
                         let mut f = h.finding.clone();
                         f.origin = Some(format!("{desc} (line {line}) via {}", path.join(" → ")));
@@ -1874,10 +1880,12 @@ pub fn analyze_project(
     fns: &[FnInfo],
     visible: Option<Vec<std::collections::HashSet<usize>>>,
     progress: &(dyn Fn() + Sync),
-) -> Vec<Finding> {
+    prior: Option<Persisted>,
+) -> (Vec<Finding>, Persisted) {
     use petgraph::algo::tarjan_scc;
     use petgraph::graph::DiGraph;
 
+    let visibility = persist::visibility_text(fns, visible.as_ref());
     let resolver = Resolver::new(fns.iter().map(|f| (f.file_idx, f.lang.family(), f.cfg.name.as_str())))
         .with_hierarchy(fns.iter().map(|f| (f.cfg.name.as_str(), f.cfg.class_bases.as_slice())))
         .with_visibility(visible)
@@ -1992,9 +2000,14 @@ pub fn analyze_project(
     // them, until no new ones appear; the last pass's findings are the result.
     let mut fields = FieldTaint::new();
     let mut outer = OuterHits::new();
-    let mut carry = Carry { cache: vec![None; comps.len()], summaries: vec![None; fns.len()], versions: vec![0; fns.len()] };
     // versions start at 1: 0 means a summary that does not exist yet
     let version_counter = std::sync::atomic::AtomicU64::new(1);
+    let fingerprints = persist::Fingerprints::new(fns, &visibility, &types, &classes, &closures, &field_fns, &creators);
+    let mut carry = match prior {
+        Some(p) => persist::seed(p, &fingerprints, &comps, &comp_of, &version_counter),
+        None => Carry { cache: vec![None; comps.len()], summaries: vec![None; fns.len()], versions: vec![0; fns.len()] },
+    };
+    let mut snapshot: Option<Persisted> = None;
     let mut result = vec![];
     let capture_depth = creators.keys().map(|&id| {
         let mut current = id;
@@ -2010,6 +2023,9 @@ pub fn analyze_project(
         let silent: &(dyn Fn() + Sync) = &|| {};
         let ((findings, found, found_outer), next) = run_pass(fns, &plan, &fields, &outer, &carry, &version_counter, if pass == 0 { progress } else { silent });
         carry = next;
+        if pass == 0 {
+            snapshot = Some(persist::capture(&fingerprints, &carry));
+        }
         result = findings;
         let mut next = fields.clone();
         for (k, t) in found {
@@ -2023,7 +2039,8 @@ pub fn analyze_project(
         fields = next;
         outer = next_outer;
     }
-    result
+    let snapshot = snapshot.unwrap_or_else(|| persist::capture(&fingerprints, &carry));
+    (result, snapshot)
 }
 
 type Pass = (Vec<Finding>, Vec<(FieldKey, Taint)>, OuterHits);

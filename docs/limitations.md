@@ -57,10 +57,10 @@ answers "may", so it errs on one side on purpose.
   dependency injection by configuration, decorators that rewrite functions,
   dynamically computed imports.
 
-- **Ten languages only**
+- **Thirteen languages only**
   **Kind:** by design
   **Consequence:** Python, JavaScript, TypeScript/TSX, Rust, Go, Java, Kotlin,
-  C#, C, C++.
+  C#, Ruby, PHP, Swift, C, C++.
   Files with other extensions are skipped. Dependencies never cross language
   families (a Python call is never linked to a Rust function).
 
@@ -97,11 +97,68 @@ answers "may", so it errs on one side on purpose.
   Kotlin grammar (`tree-sitter-kotlin-ng`) names few fields, so the
   front end relies on child order, which a grammar update may change.
 
+- **Ruby is modeled like Python**
+  **Kind:** approximation
+  **Consequence:** Methods (`def`, `def self.x`), blocks, `do` blocks and
+  lambdas are functions; the top-level statements form a `<module>` function.
+  `if` / `unless` (and their modifiers), `while` / `until`, `for`,
+  `case` / `when` / `in`, `begin` / `rescue` / `ensure`, `return`, `break`,
+  `next` and `raise` are control flow; the last expression of a method or
+  block is its value. `@name` is a field of `self`; `Foo.new(x)` calls
+  `initialize`. `require` and `require_relative` are imports. A call without
+  parentheses or arguments is a call only when it has a receiver (a bare
+  `name` is a variable). Metaprogramming (`send`, `define_method`,
+  `method_missing`, `instance_variable_get`), backticks and `%x()`, heredocs
+  with interpolation, safe navigation, a data flow through the elements a
+  block iterates (`items.each { |i| .. }` does not carry what `items` holds to
+  `i`), mixins (`include`) and the loop of `loop do` are not modeled beyond
+  their syntax.
+
+- **PHP is modeled like Java**
+  **Kind:** approximation
+  **Consequence:** Functions, methods, closures and arrow functions are
+  functions; classes, interfaces and traits name their methods
+  (`Class.method`); `$this->field` is a field of `$this`; `new C(..)` calls
+  `__construct`; `echo`, `print`, `include` / `require` and backticks are
+  calls (sinks for XSS and file inclusion). `use` of a namespace is matched to
+  files by path suffix (PSR-4 layouts), `require` / `include` by path. `if`,
+  `elseif`, `switch` (with fall-through), loops, `try` / `catch` / `finally`
+  and `throw` are control flow. Superglobals (`$_GET`, `$_POST`, `$_REQUEST`,
+  `$_COOKIE`, `$_FILES`, `$_SERVER`) are sources. Variable variables
+  (`$$x`), `extract`, dynamic calls (`$f()`, `call_user_func` with a name),
+  references (`&$x`), `list()` destructuring, `match`, generators, traits'
+  `use` inside classes, magic methods other than the constructor, and
+  framework routing (Laravel, Symfony request objects) are not modeled beyond
+  their syntax.
+
+- **Swift is modeled like Kotlin**
+  **Kind:** approximation
+  **Consequence:** Functions, `init`, `deinit`, and closures are functions;
+  classes, structs, enums, extensions and protocols name their members
+  (`Type.method`); bare property names inside a method are fields of `self`;
+  `Type(..)` calls `init`; a single-expression function or closure returns its
+  value. `if let` / `guard let` bind their names to the values (the
+  conditions of `if`, `guard` and `while` are one head statement, so
+  `&&` / `||` in them do not short-circuit in the control-flow graph).
+  `switch`, `for`, `repeat`, `do` / `catch` and `throw` are control flow;
+  `defer` is not; `async` / `await` and actors are calls. A generic call used
+  as a statement (`HMAC<SHA256>.authenticationCode(..)`) is parsed by the
+  grammar as a comparison and reaches the tables by its method name only.
+  Property wrappers, result builders, key paths, operator overloading,
+  `@objc` dispatch, subscripts and tuple destructuring are not modeled beyond
+  their syntax. `import` names modules, not files, so files in one directory
+  see each other and imports never link files.
+
 - **Incremental work is limited**
   **Kind:** gap
-  **Consequence:** Parsed files and whole-run security findings are cached.
-  After any project change, interprocedural analysis still runs for every
-  function. `index` rebuilds the whole stored graph after a change.
+  **Consequence:** Parsed files, whole-run security findings and function
+  summaries are cached. After a change, functions whose code, environment and
+  inputs are unchanged are not analyzed again, but a change to the set of
+  functions (one added, removed or renamed), to the class hierarchy, to imports
+  or to a configuration file re-analyzes every function. A function is also
+  analyzed again when a line above it moves (its position is part of its
+  code). `index` still builds the whole graph in memory; it rewrites only the
+  files whose rows changed.
 
 ## 2. Parsing and control flow
 
@@ -283,8 +340,9 @@ answers "may", so it errs on one side on purpose.
   repository's Rust sources. The `security` command still uses the separate
   summary-based implementation. Both analyses have finite budgets and inherit
   the language and rule limits above.
-- A stored graph is rebuilt as a whole when the project changes. Queries over
-  the stored graph are approximate; `query reach` does not model sanitizers.
+- A stored graph is built as a whole when the project changes (only the rows
+  of changed files are rewritten). Queries over the stored graph are
+  approximate; `query reach` does not model sanitizers.
 
 ## 8. Crypto inventory (`crypto`)
 
@@ -299,10 +357,13 @@ answers "may", so it errs on one side on purpose.
   like a crypto call (`MD5`, `sha256`) is reported unless the entry is scoped
   to a library that the file must import. Add entries under `[[crypto.*]]` in
   `.taintless.toml`.
-- **Languages (gap).** Only the languages the tool parses are scanned: Python,
-  JavaScript / TypeScript, Rust, Go, Java, Kotlin, C# and C / C++. PHP, Ruby
-  and Swift code is ignored (files are still checked for key material and
-  settings).
+- **Languages.** Only the languages the tool parses are scanned: Python,
+  JavaScript / TypeScript, Rust, Go, Java, Kotlin, C#, Ruby, PHP, Swift and
+  C / C++ (files of other languages are still checked for key material and
+  settings). PHP has no imports for its built-in functions (`openssl_*`,
+  `hash`, `md5`, `sodium_*`), which are matched in every file; Ruby's
+  `OpenSSL::` and `Digest::` constants are matched the same way. A Swift call
+  of a CryptoKit generic as a statement is matched by method name.
 - **Arguments are read from source text (approximation).** Literals are not
   kept in the IR, so an argument is read from the text at the call. Only
   literals, and a name with exactly one literal definition in the same file,
@@ -525,8 +586,8 @@ answers "may", so it errs on one side on purpose.
 ## 10. Performance and scale
 
 - Analysis still holds the project in memory. The cache skips parsing of
-  unchanged files and reuses security findings for an unchanged project; it
-  does not yet recompute only affected functions after an edit.
+  unchanged files, reuses security findings for an unchanged project and
+  reuses function summaries after an edit (see the incremental limits above).
 - Parsing and per-file work are parallel; the interprocedural phase is parallel
   only across independent groups of the call graph, so one very large strongly
   connected group serializes.

@@ -16,13 +16,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use petgraph::visit::NodeIndexable;
 use std::path::{Path, PathBuf};
 
-const PY: u8 = 0;
-const JS: u8 = 1;
-const RS: u8 = 2;
-const GO: u8 = 3;
-const JAVA: u8 = 4;
-const C: u8 = 5;
-const CS: u8 = 6;
+const PY: u8 = crate::lang::family::PYTHON;
+const JS: u8 = crate::lang::family::JAVASCRIPT;
+const RS: u8 = crate::lang::family::RUST;
+const GO: u8 = crate::lang::family::GO;
+const JAVA: u8 = crate::lang::family::JAVA;
+const C: u8 = crate::lang::family::C;
+const CS: u8 = crate::lang::family::CSHARP;
+const RB: u8 = crate::lang::family::RUBY;
+const PH: u8 = crate::lang::family::PHP;
+const SW: u8 = crate::lang::family::SWIFT;
 
 fn call_matches(pattern: &str, callee: &str) -> bool {
     match pattern.strip_suffix('*') {
@@ -1185,6 +1188,48 @@ fn dependency_names(file_name: &str, text: &str) -> Option<(u8, Vec<String>)> {
             let names = text.lines().filter(|l| l.contains("PackageReference") || l.contains("PackageVersion")).filter_map(|l| xml_attribute(l, "Include").or_else(|| xml_attribute(l, "Update"))).collect();
             Some((CS, names))
         }
+        // `gem 'bcrypt', '~> 3.1'`, `s.add_dependency "jwt"`, and the `name (1.2.3)` lines of a lock file
+        n if matches!(n, "Gemfile" | "gems.rb") || n.ends_with(".gemspec") => {
+            let names = text
+                .lines()
+                .filter_map(|l| {
+                    let l = l.trim();
+                    let rest = l.strip_prefix("gem ").or_else(|| l.split_once(".add_dependency ").or_else(|| l.split_once(".add_runtime_dependency ")).or_else(|| l.split_once(".add_development_dependency ")).map(|(_, r)| r))?;
+                    quoted_strings(rest).into_iter().next()
+                })
+                .collect();
+            Some((RB, names))
+        }
+        // `"require": { "firebase/php-jwt": "^6.0" }` and the `name`s of the packages in the lock file
+        "composer.json" => {
+            let v: serde_json::Value = serde_json::from_str(text).ok()?;
+            let names = ["require", "require-dev"].iter().filter_map(|k| v.get(*k)?.as_object()).flat_map(|o| o.keys().cloned()).collect();
+            Some((PH, names))
+        }
+        "composer.lock" => {
+            let v: serde_json::Value = serde_json::from_str(text).ok()?;
+            let names = ["packages", "packages-dev"].iter().filter_map(|k| v.get(*k)?.as_array()).flatten().filter_map(|p| p.get("name")?.as_str().map(str::to_string)).collect();
+            Some((PH, names))
+        }
+        // `.package(url: "https://github.com/krzyzanowskim/CryptoSwift.git", from: ..)` and the pods of a Podfile
+        "Package.swift" => {
+            let names = quoted_strings(text).into_iter().filter(|q| q.contains("://") || q.starts_with("git@")).filter_map(|u| u.trim_end_matches('/').rsplit('/').next().map(|n| n.trim_end_matches(".git").to_ascii_lowercase())).collect();
+            Some((SW, names))
+        }
+        "Podfile" => {
+            let names = text.lines().filter_map(|l| l.trim().strip_prefix("pod ").and_then(|r| quoted_strings(r).into_iter().next())).map(|n| n.to_ascii_lowercase()).collect();
+            Some((SW, names))
+        }
+        "Package.resolved" => {
+            let v: serde_json::Value = serde_json::from_str(text).ok()?;
+            let pins = v.get("pins").or_else(|| v.get("object").and_then(|o| o.get("pins")))?.as_array()?;
+            let names = pins.iter().filter_map(|p| p.get("identity").or_else(|| p.get("package"))?.as_str().map(str::to_ascii_lowercase)).collect();
+            Some((SW, names))
+        }
+        "Gemfile.lock" | "gems.locked" => {
+            let names = text.lines().filter(|l| l.starts_with("    ") && !l.starts_with("      ")).filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect();
+            Some((RB, names))
+        }
         "packages.config" => {
             let names = text.lines().filter(|l| l.contains("<package ")).filter_map(|l| xml_attribute(l, "id")).collect();
             Some((CS, names))
@@ -1526,6 +1571,14 @@ fn defined_object(src: &str, name: &str) -> Option<String> {
     found
 }
 
+/// The `'key' => value` pairs of a PHP array literal (`['cost' => 10]`, `array("cost" => 10)`).
+fn array_pairs(arg: &str) -> Vec<(String, String)> {
+    let a = arg.trim();
+    let inner = a.strip_prefix('[').and_then(|r| r.strip_suffix(']')).or_else(|| a.strip_prefix("array(").and_then(|r| r.strip_suffix(')')));
+    let Some(inner) = inner else { return vec![] };
+    split_top(inner).into_iter().filter_map(|item| item.split_once("=>").and_then(|(k, v)| Some((literal_text(k)?, v.trim().to_string())))).collect()
+}
+
 /// The top-level comma separated parts of `s` (brackets and quotes respected).
 fn split_top(s: &str) -> Vec<String> {
     let (mut out, mut cur, mut depth, mut quote) = (vec![], String::new(), 0i32, None::<char>);
@@ -1843,7 +1896,7 @@ fn is_literal_number_or_string(arg: &str, resolve: &dyn Fn(&str) -> Option<Strin
 /// The number an argument stands for (a literal, or a constant of the file).
 fn arg_number(arg: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Option<u64> {
     let a = arg.trim();
-    let a = a.rsplit_once('=').filter(|(k, _)| k.chars().all(|c| c.is_alphanumeric() || c == '_')).map_or(a, |(_, v)| v.trim());
+    let a = named_arg(a).map_or(a, |(_, v)| v);
     if let Ok(n) = a.replace('_', "").parse::<u64>() {
         return Some(n);
     }
@@ -1882,7 +1935,8 @@ enum Hard {
 
 /// Is this argument a literal (a string, a byte array, a constant defined as one)? All zeros count as `Zero`.
 fn hardcoded(arg: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Hard {
-    let a = arg.trim();
+    // `data: Data("k".utf8)`: the value after a label
+    let a = named_arg(arg.trim()).map_or(arg.trim(), |(_, v)| v);
     let resolved;
     let a = if a.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') && !a.is_empty() {
         match resolve(a.rsplit('.').next().unwrap_or(a)) {
@@ -1896,12 +1950,12 @@ fn hardcoded(arg: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Hard {
         a
     };
     let mut core = a;
-    for w in ["Encoding.UTF8.GetBytes(", "Encoding.ASCII.GetBytes(", "Encoding.Default.GetBytes(", "Encoding.Unicode.GetBytes(", "Convert.FromBase64String(", "Convert.FromHexString(", "bytes(", "bytearray(", "Buffer.from(", "[]byte(", "unhexlify(", "binascii.unhexlify(", "bytes.fromhex(", "b64decode(", "base64.b64decode(", "atob(", "hex::decode(", "String::from("] {
+    for w in ["Encoding.UTF8.GetBytes(", "Encoding.ASCII.GetBytes(", "Encoding.Default.GetBytes(", "Encoding.Unicode.GetBytes(", "Convert.FromBase64String(", "Convert.FromHexString(", "bytes(", "bytearray(", "Buffer.from(", "[]byte(", "unhexlify(", "binascii.unhexlify(", "bytes.fromhex(", "b64decode(", "base64.b64decode(", "atob(", "hex::decode(", "String::from(", "Data(", "Array(", "[UInt8]("] {
         if let Some(inner) = core.strip_prefix(w) {
             core = inner.trim_end_matches(')').trim();
         }
     }
-    for suffix in [".toByteArray", ".getBytes", ".encode", ".as_bytes", ".to_vec", ".into", ".to_owned", ".to_string", ".toCharArray"] {
+    for suffix in [".toByteArray", ".getBytes", ".encode", ".as_bytes", ".to_vec", ".into", ".to_owned", ".to_string", ".toCharArray", ".utf8", ".utf8CString"] {
         if let Some(i) = core.find(suffix) {
             core = core[..i].trim();
         }
@@ -1941,9 +1995,11 @@ fn hardcoded(arg: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Hard {
 
 /// The `key=value` form of an argument (Python keyword arguments, JS object properties are not matched).
 fn named_arg(arg: &str) -> Option<(&str, &str)> {
-    let (k, v) = arg.split_once('=')?;
+    // `key=value`, or `key: value` (Ruby, Swift)
+    let split = arg.split_once('=').filter(|(k, v)| !v.starts_with('=') && !k.contains(':')).or_else(|| arg.split_once(": "));
+    let (k, v) = split?;
     let k = k.trim();
-    (!v.starts_with('=') && !k.is_empty() && k.chars().all(|c| c.is_alphanumeric() || c == '_')).then_some((k, v.trim()))
+    (!k.is_empty() && k.chars().all(|c| c.is_alphanumeric() || c == '_')).then_some((k, v.trim()))
 }
 
 fn issue_for(role: &str, h: &Hard) -> Option<String> {
@@ -1971,6 +2027,8 @@ fn secret_issues(fam: u8, callee: &str, args: &[String], resolve: &dyn Fn(&str) 
                 "iv" | "nonce" => Some("iv"),
                 "salt" => Some("salt"),
                 "secret" | "password" | "passphrase" | "pwd" => Some("secret"),
+                // Swift labels are written in the order of the parameters
+                _ if fam == SW => positional.iter().find(|a| a.index == i).map(|a| a.role.as_str()),
                 _ => None,
             },
             None => positional.iter().find(|a| a.index == i).map(|a| a.role.as_str()),
@@ -1995,8 +2053,11 @@ fn limit_issues(fam: u8, callee: &str, args: &[String], resolve: &dyn Fn(&str) -
         let by_keyword = args.iter().filter(|a| named_arg(a).is_some_and(|(k, _)| l.keywords.iter().any(|w| w == k)));
         // an options object (`{ memoryCost: 4096 }`): the property of that name
         let objects: Vec<String> = args.iter().filter_map(|a| if a.trim_start().starts_with('{') { Some(a.clone()) } else { resolve(&format!("{{}}{}", a.trim())).filter(|o| o.starts_with('{')) }).collect();
+        // a PHP array of options: `['cost' => 4]`
+        let arrays: Vec<(String, String)> = args.iter().flat_map(|a| array_pairs(a)).collect();
+        let by_array: Vec<String> = arrays.into_iter().filter(|(k, _)| l.keywords.iter().any(|w| w == k)).map(|(_, v)| v).collect();
         let by_property: Vec<String> = objects.iter().flat_map(|a| flow_settings(a, 1, "")).filter(|(_, k, _)| l.keywords.iter().any(|w| w == k)).map(|(_, _, v)| v).collect();
-        for a in by_position.into_iter().chain(by_keyword).chain(&by_property) {
+        for a in by_position.into_iter().chain(by_keyword).chain(&by_property).chain(&by_array) {
             if let Some(n) = arg_number(a, resolve)
                 && n < min
             {
@@ -2018,6 +2079,15 @@ pub struct Bindings {
 }
 
 impl Bindings {
+    /// A digest of the names the file's imports bind, for telling whether an analysis that used them can be reused.
+    pub fn fingerprint(&self) -> String {
+        let mut names = self.names.clone();
+        names.sort();
+        let mut wildcards = self.wildcards.clone();
+        wildcards.sort();
+        format!("{names:?}{wildcards:?}")
+    }
+
     pub fn is_empty(&self) -> bool {
         self.names.is_empty() && self.wildcards.is_empty()
     }
@@ -2844,7 +2914,7 @@ pub fn scan_artifact(path: &Path, bytes: &[u8]) -> Vec<CryptoUse> {
         out.push(u);
         out.extend(jks_certificates(path, bytes));
         out.extend(pkcs12_contents(path, bytes));
-        out.extend(certificates(path, bytes));
+        out.extend(bks_certificates(path, bytes));
     }
     if matches!(ext.as_str(), "jar" | "war" | "ear" | "aar") {
         out.extend(jar_contents(path, bytes));
@@ -2987,60 +3057,60 @@ fn pkcs12_contents(path: &Path, bytes: &[u8]) -> Vec<CryptoUse> {
 struct BigEndian<'a>(&'a [u8]);
 
 impl<'a> BigEndian<'a> {
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+    fn be_take(&mut self, n: usize) -> Option<&'a [u8]> {
         let (head, rest) = self.0.split_at_checked(n)?;
         self.0 = rest;
         Some(head)
     }
-    fn u32(&mut self) -> Option<usize> {
-        Some(u32::from_be_bytes(self.take(4)?.try_into().ok()?) as usize)
+    fn be_u32(&mut self) -> Option<usize> {
+        Some(u32::from_be_bytes(self.be_take(4)?.try_into().ok()?) as usize)
     }
-    fn utf(&mut self) -> Option<String> {
-        let n = u16::from_be_bytes(self.take(2)?.try_into().ok()?) as usize;
-        Some(String::from_utf8_lossy(self.take(n)?).into_owned())
+    fn be_utf(&mut self) -> Option<String> {
+        let n = u16::from_be_bytes(self.be_take(2)?.try_into().ok()?) as usize;
+        Some(String::from_utf8_lossy(self.be_take(n)?).into_owned())
     }
     /// A BKS certificate: its type, then the bytes.
-    fn cert(&mut self) -> Option<&'a [u8]> {
-        self.utf()?;
-        let n = self.u32()?;
-        self.take(n)
+    fn be_cert(&mut self) -> Option<&'a [u8]> {
+        self.be_utf()?;
+        let n = self.be_u32()?;
+        self.be_take(n)
     }
 }
 
 /// The certificates of a BouncyCastle keystore (`.bks`): entry type, alias, date, then the entry.
 /// Key entries are read as far as their certificate chain; sealed and secret entries end the reading.
-fn certificates(path: &Path, bytes: &[u8]) -> Vec<CryptoUse> {
+fn bks_certificates(path: &Path, bytes: &[u8]) -> Vec<CryptoUse> {
     let mut r = BigEndian(bytes);
     let mut out = vec![];
-    if !matches!(r.u32(), Some(1 | 2)) {
+    if !matches!(r.be_u32(), Some(1 | 2)) {
         return out;
     }
     // salt, iteration count
-    let Some(salt) = r.u32().filter(|n| *n < 256) else { return out };
-    if r.take(salt).is_none() || r.u32().is_none() {
+    let Some(salt) = r.be_u32().filter(|n| *n < 256) else { return out };
+    if r.be_take(salt).is_none() || r.be_u32().is_none() {
         return out;
     }
     for _ in 0..256 {
-        let Some(kind) = r.take(1).map(|b| b[0]) else { break };
+        let Some(kind) = r.be_take(1).map(|b| b[0]) else { break };
         if kind == 0 {
             break;
         }
         let entry = (|| {
-            let alias = r.utf()?;
-            r.take(8)?;
+            let alias = r.be_utf()?;
+            r.be_take(8)?;
             let mut certs = vec![];
             match kind {
-                1 => certs.push(r.cert()?),
+                1 => certs.push(r.be_cert()?),
                 2 => {
                     // key: type, format, algorithm, name, encoded bytes; then the chain
-                    r.take(1)?;
-                    r.utf()?;
-                    r.utf()?;
-                    r.utf()?;
-                    let n = r.u32()?;
-                    r.take(n)?;
-                    for _ in 0..r.u32()?.min(16) {
-                        certs.push(r.cert()?);
+                    r.be_take(1)?;
+                    r.be_utf()?;
+                    r.be_utf()?;
+                    r.be_utf()?;
+                    let n = r.be_u32()?;
+                    r.be_take(n)?;
+                    for _ in 0..r.be_u32()?.min(16) {
+                        certs.push(r.be_cert()?);
                     }
                 }
                 _ => return None,
@@ -3066,29 +3136,29 @@ fn jks_certificates(path: &Path, bytes: &[u8]) -> Vec<CryptoUse> {
     let mut r = BigEndian(bytes);
     let mut out = vec![];
     // JCEKS has the layout of JKS, with secret key entries (tag 3) that are serialized objects
-    if !matches!(r.u32(), Some(0xFEED_FEED | 0xCECE_CECE)) || !matches!(r.u32(), Some(1 | 2)) {
+    if !matches!(r.be_u32(), Some(0xFEED_FEED | 0xCECE_CECE)) || !matches!(r.be_u32(), Some(1 | 2)) {
         return out;
     }
-    let Some(count) = r.u32() else { return out };
+    let Some(count) = r.be_u32() else { return out };
     for _ in 0..count.min(256) {
         let entry = (|| {
-            let tag = r.u32()?;
-            let alias = r.utf()?;
-            r.take(8)?;
+            let tag = r.be_u32()?;
+            let alias = r.be_utf()?;
+            r.be_take(8)?;
             let mut certs = vec![];
             let chain = match tag {
                 1 => {
-                    let n = r.u32()?;
-                    r.take(n)?;
-                    r.u32()?
+                    let n = r.be_u32()?;
+                    r.be_take(n)?;
+                    r.be_u32()?
                 }
                 2 => 1,
                 _ => return None,
             };
             for _ in 0..chain.min(16) {
-                r.utf()?;
-                let n = r.u32()?;
-                certs.push(r.take(n)?);
+                r.be_utf()?;
+                let n = r.be_u32()?;
+                certs.push(r.be_take(n)?);
             }
             Some((tag, alias, certs))
         })();
@@ -3699,11 +3769,14 @@ fn inspect(fam: u8, callee: &str, primitive: &str, args: &[String], resolve: &dy
             }
             let last = ident.rsplit('.').next().unwrap_or(ident);
             let upper_const = last.chars().any(char::is_uppercase) && !last.chars().any(char::is_lowercase);
-            if last.chars().next().is_some_and(char::is_uppercase) && (ident.contains('.') || upper_const || last.chars().any(char::is_lowercase)) {
+            let prefix = active().constant_prefix.iter().find(|p| last.starts_with(p.as_str()));
+            let apple_constant = prefix.is_some();
+            if (last.chars().next().is_some_and(char::is_uppercase) || apple_constant) && (ident.contains('.') || upper_const || apple_constant || last.chars().any(char::is_lowercase)) {
                 if !upper_const && !d.classes.contains(&last.to_string()) {
                     d.classes.push(last.to_string());
                 }
-                words.extend(tokens(last));
+                // CommonCrypto: `kCCAlgorithmDES` names DES
+                words.extend(tokens(prefix.map_or(last, |p| &last[p.len()..])));
             }
         }
     }
@@ -3711,6 +3784,10 @@ fn inspect(fam: u8, callee: &str, primitive: &str, args: &[String], resolve: &dy
         d.literal = const_literal;
     }
     d.weak = weak_word(&words).or_else(|| bits.map(|b| format!("{b}-bit key")));
+    // a JWT signed with the algorithm `none` is not signed
+    if d.weak.is_none() && primitive == "signature" && d.literal.as_deref().is_some_and(|l| active().unsigned_literal.iter().any(|u| l.eq_ignore_ascii_case(u))) {
+        d.weak = Some("unsigned (alg none)".into());
+    }
     if d.weak.is_none()
         && fam == JAVA
         && callee.ends_with("Cipher.getInstance")

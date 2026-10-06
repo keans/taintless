@@ -485,11 +485,11 @@ when there are up to six callers and they all pass the same literal.
 
 **Coverage.** The built-in tables cover the standard libraries and the common
 third-party ones of Python, JavaScript / TypeScript, Rust, Go, Java / Kotlin,
-C# and C / C++: for example `cryptography`, PyCryptodome, PyNaCl,
-`node:crypto`, WebCrypto, `crypto-js`, `jose`, the RustCrypto crates, `ring`,
-`rustls`, the `openssl` crate, Go `crypto/*` and `x/crypto`, JCE, Bouncy
-Castle, Spring Security password encoders, Jasypt, Guava hashing, Tink, JWT
-libraries, OpenSSL, mbedTLS, wolfSSL, libsodium and libgcrypt, and for .NET
+C#, Ruby, PHP, Swift and C / C++: for example `cryptography`, PyCryptodome,
+PyNaCl, `node:crypto`, WebCrypto, `crypto-js`, `jose`, the RustCrypto crates,
+`ring`, `rustls`, the `openssl` crate, Go `crypto/*` and `x/crypto`, JCE,
+Bouncy Castle, Spring Security password encoders, Jasypt, Guava hashing, Tink,
+JWT libraries, OpenSSL, mbedTLS, wolfSSL, libsodium and libgcrypt, and for .NET
 `System.Security.Cryptography` (hashes, `Aes`, `RSA`, `Rfc2898DeriveBytes`,
 `RandomNumberGenerator`, `CipherMode.ECB`, TLS protocol settings and
 certificate callbacks), Bouncy Castle, BCrypt.Net, Konscious Argon2, NSec and
@@ -615,8 +615,10 @@ algorithms are flagged like the same calls in source.
 `package.json`, `pyproject.toml`, `requirements*.txt`, `setup.py`, `setup.cfg`,
 `Pipfile`, `go.mod`, `pom.xml`, `build.gradle(.kts)`, Gradle's
 `libs.versions.toml`, Conan (`conanfile.txt` / `.py`), `vcpkg.json` and
-`CMakeLists.txt` (`find_package`, imported targets), and the lock files
-`Cargo.lock`, `package-lock.json`, `poetry.lock`, `Pipfile.lock` and `go.sum`.
+`CMakeLists.txt` (`find_package`, imported targets), `Gemfile` / `*.gemspec`,
+`composer.json`, `Package.swift` and `Podfile`, and the lock files
+`Cargo.lock`, `package-lock.json`, `poetry.lock`, `Pipfile.lock`, `go.sum`,
+`Gemfile.lock`, `composer.lock` and `Package.resolved`.
 Crypto libraries they declare are listed with file and line, and marked `[not
 imported]` when no scanned file imports them (unused, used through another
 library, or code that was not scanned) and `[lock file]` when only a lock file
@@ -641,9 +643,9 @@ Matching is by name, using the tables in `src/analysis/crypto/tables.toml`.
 A `.taintless.toml` (or `--config`) can add entries under `[crypto]` in the
 same shape; they are matched before the built-in ones, so an entry can also
 override a built-in one. `lang` is `python`, `javascript` (also TypeScript),
-`rust`, `go`, `java` (also Kotlin), `csharp` or `c` (also C++). A call entry
-takes an optional `weak = true` and an optional `library` (it then counts only
-in files that import that library):
+`rust`, `go`, `java` (also Kotlin), `csharp`, `ruby`, `php`, `swift` or `c`
+(also C++). A call entry takes an optional `weak = true` and an optional
+`library` (it then counts only in files that import that library):
 
 ```toml
 [[crypto.library]]
@@ -660,12 +662,13 @@ algorithm = "AES-GCM"
 
 The other tables are `dependency` (manifest names that differ from the module),
 `secret` (arguments holding keys, IVs, salts), `algorithm` (arguments that name
-the algorithm), `limit` (minimum iterations or cost) and `prng`; see the header
-of `tables.toml` for the fields. Values that are not literals (read from the
-environment, computed, or defined differently in several files) are not seen,
-and neither are
-keys given as struct fields or JS object properties. This is an inventory, not
-a vulnerability check: the `weak-crypto` rule in `security` is separate.
+the algorithm), `limit` (minimum iterations or cost), `prng`, and the plain
+lists `constant_prefix` (`kCCAlgorithm`) and `unsigned_literal` (JWT `none`);
+see the header of `tables.toml` for the fields. Values that are not literals
+(read from the environment, computed, or defined differently in several
+files) are not seen, and neither are keys given as struct fields or JS object
+properties. This is an inventory, not a vulnerability check: the `weak-crypto`
+rule in `security` is separate.
 
 ## Cache and stored results
 
@@ -682,8 +685,13 @@ database contents.
   invalidates these facts.
 - **Security results:** an unchanged project, configuration and manifests
   reuse whole-run findings. A change to those inputs invalidates the result.
+- **Function summaries:** after an edit, `security` analyzes again only the
+  functions the edit can affect (it reports `analyzed N of M functions`): the
+  changed ones and, while a summary changes, their callers. Adding, removing
+  or renaming a function, or changing a configuration file, analyzes all.
 - **Code property graph:** `index` stores it for `query` and `export-graph`.
-  Re-run `index` after the project changes.
+  Re-run `index` after the project changes; only the files whose rows changed
+  are rewritten.
 - **Findings history:** `security --store` records findings for `history` and
   `triage`. Triage decisions survive cache clearing and code changes.
 

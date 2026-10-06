@@ -93,7 +93,7 @@ fn strip_jsonc(s: &str) -> String {
 }
 
 fn read_tsconfig(file: &Path, depth: usize) -> Option<TsConfig> {
-    let text = crate::inputs::note(&file, std::fs::read_to_string(&file)).ok()?;
+    let text = crate::inputs::note(file, std::fs::read_to_string(file)).ok()?;
     let v: serde_json::Value = serde_json::from_str(&strip_jsonc(&text)).ok()?;
     let dir = file.parent().unwrap_or(Path::new("")).to_path_buf();
     // a relative `extends` supplies what this file does not set
@@ -221,16 +221,16 @@ impl Manifests {
                 self.ts.insert(dir.to_path_buf(), c);
             }
         }
-        if let Ok(text) = crate::inputs::note(&dir.join("go.mod"), std::fs::read_to_string(&dir.join("go.mod"))) {
+        if let Ok(text) = crate::inputs::note(&dir.join("go.mod"), std::fs::read_to_string(dir.join("go.mod"))) {
             if let Some(m) = go_module_name(&text) {
                 self.add_go_module(m, dir);
             }
             self.add_go_replaces(&text, dir);
         }
-        if let Ok(text) = crate::inputs::note(&dir.join("go.work"), std::fs::read_to_string(&dir.join("go.work"))) {
+        if let Ok(text) = crate::inputs::note(&dir.join("go.work"), std::fs::read_to_string(dir.join("go.work"))) {
             for u in go_directive(&text, "use") {
                 let d = dir.join(u.trim_matches('"'));
-                if let Ok(t) = crate::inputs::note(&d.join("go.mod"), std::fs::read_to_string(&d.join("go.mod")))
+                if let Ok(t) = crate::inputs::note(&d.join("go.mod"), std::fs::read_to_string(d.join("go.mod")))
                     && let Some(m) = go_module_name(&t)
                 {
                     self.add_go_module(m, &d);
@@ -240,7 +240,7 @@ impl Manifests {
         }
         self.read_package_json(dir, true);
         self.read_pyproject(dir);
-        if let Ok(text) = crate::inputs::note(&dir.join("Cargo.toml"), std::fs::read_to_string(&dir.join("Cargo.toml")))
+        if let Ok(text) = crate::inputs::note(&dir.join("Cargo.toml"), std::fs::read_to_string(dir.join("Cargo.toml")))
             && let Ok(v) = text.parse::<toml::Table>()
             && let Some(pkg) = v.get("package").and_then(|p| p.as_table())
         {
@@ -286,7 +286,7 @@ impl Manifests {
 
     /// `name`, `exports`, `main`; with `workspaces` the member packages too.
     fn read_package_json(&mut self, dir: &Path, expand: bool) {
-        let Ok(text) = crate::inputs::note(&dir.join("package.json"), std::fs::read_to_string(&dir.join("package.json"))) else { return };
+        let Ok(text) = crate::inputs::note(&dir.join("package.json"), std::fs::read_to_string(dir.join("package.json"))) else { return };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return };
         if let Some(name) = v["name"].as_str() {
             let mut pkg = JsPackage { dir: dir.to_path_buf(), ..Default::default() };
@@ -328,7 +328,7 @@ impl Manifests {
 
     /// Import roots of a Python project: `src` and what the build config names.
     fn read_pyproject(&mut self, dir: &Path) {
-        let Ok(text) = crate::inputs::note(&dir.join("pyproject.toml"), std::fs::read_to_string(&dir.join("pyproject.toml"))) else { return };
+        let Ok(text) = crate::inputs::note(&dir.join("pyproject.toml"), std::fs::read_to_string(dir.join("pyproject.toml"))) else { return };
         let Ok(v) = text.parse::<toml::Table>() else { return };
         let mut roots: Vec<PathBuf> = vec![dir.to_path_buf(), dir.join("src")];
         let tool = v.get("tool").and_then(|t| t.as_table());
