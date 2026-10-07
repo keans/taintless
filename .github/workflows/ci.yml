@@ -17,11 +17,12 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: python3 scripts/check_markdown_width.py
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
-  # Lower every function of real open-source projects; any parse error or
-  # panic fails the job (see tests/smoke.rs).
+  # Check real projects for lowering and analysis failures. Compiler-validated
+  # fmt also reports unsupported C++ syntax (see tests/smoke.rs).
   corpora:
     runs-on: ubuntu-latest
     strategy:
@@ -46,8 +47,25 @@ jobs:
           GIT_TERMINAL_PROMPT: "0"
         run: |
           git clone --depth 1 "https://github.com/$CORPUS_REPOSITORY" "$RUNNER_TEMP/corpus"
-      - name: Smoke test
+          echo "TAINTLESS_CORPUS=$RUNNER_TEMP/corpus" >> "$GITHUB_ENV"
+      - name: Validate and expand C/C++ translation units
+        if: matrix.repository == 'DaveGamble/cJSON' || matrix.repository == 'fmtlib/fmt'
         env:
-          TAINTLESS_CORPUS: ${{ runner.temp }}/corpus
+          CORPUS_REPOSITORY: ${{ matrix.repository }}
+        run: |
+          if [ "$CORPUS_REPOSITORY" = 'DaveGamble/cJSON' ]; then
+            options=(-DENABLE_CJSON_UTILS=ON -DENABLE_CUSTOM_COMPILER_FLAGS=OFF)
+          else
+            options=(-DFMT_TEST=ON -DFMT_DOC=OFF -DFMT_MODULE=OFF)
+          fi
+          cmake -S "$RUNNER_TEMP/corpus" -B "$RUNNER_TEMP/corpus-build" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${options[@]}"
+          python3 scripts/prepare_compiled_corpus.py "$RUNNER_TEMP/corpus" \
+            "$RUNNER_TEMP/corpus-build/compile_commands.json" "$RUNNER_TEMP/corpus-expanded"
+          echo "TAINTLESS_CORPUS=$RUNNER_TEMP/corpus-expanded" >> "$GITHUB_ENV"
+          if [ "$CORPUS_REPOSITORY" = 'fmtlib/fmt' ]; then
+            echo "TAINTLESS_CORPUS_RECOVER_CPP=1" >> "$GITHUB_ENV"
+          fi
+      - name: Smoke test
         run: |
           cargo test --locked --release --test smoke scans_external_corpora -- --exact --nocapture

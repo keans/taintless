@@ -8,9 +8,9 @@
 
 use super::node::{NodeId, NodeKind};
 use crate::lang::common::Spec;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashMap;
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
 /// Index into [`Ast::nodes`].
 pub type AstIdx = usize;
@@ -92,9 +92,7 @@ impl Ast {
 /// Parse `src` and build its AST. `file` is the id the nodes carry (the
 /// project assigns one per file).
 pub fn build<S: Spec>(spec: &S, lang: tree_sitter::Language, file: u32, src: &str) -> Result<Ast> {
-    let mut parser = Parser::new();
-    parser.set_language(&lang)?;
-    let tree = parser.parse(src, None).ok_or_else(|| anyhow!("parse failed"))?;
+    let tree = crate::lang::common::parse_tree(lang, src)?;
     crate::lang::common::validate_tree(&tree)?;
     let mut b = Builder { spec, src: src.as_bytes(), file, ast: Ast::default(), seen: HashMap::new() };
     b.add(tree.root_node(), None, 0);

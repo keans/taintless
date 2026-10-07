@@ -801,10 +801,19 @@ test builds reuse them. CLI tests default to two Rayon threads per process to
 avoid competing thread pools when tests run concurrently. Set
 `RAYON_NUM_THREADS` to override this when checking parallel behavior.
 
-CI (`.github/workflows/ci.yml`) runs the same checks. Fixtures live in
-`tests/fixtures/<language>/`; each one is snapshot-tested as DOT in
-`tests/snapshots/`. The code property graph of the fixture directories and
-language fixtures is snapshotted too (node and edge counts per kind, and
+CI (`.github/workflows/ci.yml`) runs the same checks. Its cJSON and fmt corpora
+use CMake's compilation database to check translation units with the compiler
+and expand macros before scanning. Project headers are included; host SDK
+declarations are omitted. Compiler and preprocessing failures fail the job.
+For compiler-validated fmt, set `TAINTLESS_CORPUS_RECOVER_CPP=1` to lower
+fully parsed C++ functions and report unsupported syntax and skipped function
+nodes. Translation units are analyzed separately to avoid merging repeated
+header definitions into one synthetic project. Lowering and analysis failures
+remain fatal. This mode does not enable partial parsing in the CLI or the
+repository's own smoke test.
+Fixtures live in `tests/fixtures/<language>/`; each one is snapshot-tested as
+DOT in `tests/snapshots/`. The code property graph of the fixture directories
+and language fixtures is snapshotted too (node and edge counts per kind, and
 function-level calls; `tests/cpg_snapshots.rs`). The ignored
 `tests/cpg_corpus.rs` test builds graphs for projects under `SCAN_CORPUS`,
 checks their shape and determinism, and can pin counts in a baseline

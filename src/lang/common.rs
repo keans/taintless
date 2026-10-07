@@ -916,9 +916,47 @@ struct Engine<'a, S: Spec> {
     implicit: HashMap<String, String>,
 }
 
+/// Parse dependent C++ constructor calls despite a tree-sitter ambiguity.
+/// The grammar reads `typename T::type(args)` as a parameter declaration.
+/// Blanking only the disambiguating keyword lets it recover the call; byte
+/// offsets and line numbers still refer to the original source.
+pub(crate) fn parse_tree(lang: tree_sitter::Language, src: &str) -> Result<tree_sitter::Tree> {
+    let cpp = lang == tree_sitter_cpp::LANGUAGE.into();
+    let mut parser = Parser::new();
+    parser.set_language(&lang)?;
+    let mut tree = parser.parse(src, None).ok_or_else(|| anyhow!("parse failed"))?;
+    if cpp && tree.root_node().has_error() {
+        let mut replacements = vec![];
+        let mut stack = vec![tree.root_node()];
+        while let Some(node) = stack.pop() {
+            if node.kind() == "dependent_type"
+                && node.named_child(0).is_some_and(|n| n.kind() == "qualified_identifier")
+                && src[node.end_byte()..].trim_start().starts_with('(')
+                && src[node.start_byte()..].starts_with("typename")
+            {
+                replacements.push(node.start_byte());
+            }
+            let mut cursor = node.walk();
+            stack.extend(node.named_children(&mut cursor));
+        }
+        if !replacements.is_empty() {
+            let mut input = src.as_bytes().to_vec();
+            for start in replacements {
+                input[start..start + "typename".len()].fill(b' ');
+            }
+            tree = parser.parse(&input, None).ok_or_else(|| anyhow!("parse failed"))?;
+        }
+    }
+    Ok(tree)
+}
+
 /// Reject recovered syntax trees so incomplete analysis cannot look successful.
 pub(crate) fn validate_tree(tree: &tree_sitter::Tree) -> Result<()> {
-    let mut stack = vec![tree.root_node()];
+    validate_node(tree.root_node())
+}
+
+fn validate_node(root: Node) -> Result<()> {
+    let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         // tree-sitter-c recovers GNU case ranges as `value (ERROR ... upper)`.
         // The lowering already handles this extension as part of the case label.
@@ -934,6 +972,21 @@ pub(crate) fn validate_tree(tree: &tree_sitter::Tree) -> Result<()> {
         if case_range {
             continue;
         }
+        // C++ permits an unnamed unscoped enum with an underlying type.
+        // tree-sitter-cpp recovers it by inserting a missing enum name; the
+        // base and enumerators are otherwise parsed normally.
+        let unnamed_enum = node.is_missing()
+            && node.kind() == "type_identifier"
+            && node.parent().is_some_and(|p| {
+                p.kind() == "enum_specifier"
+                    && p.child_by_field_name("name") == Some(node)
+                    && p.child_by_field_name("base").is_some()
+            })
+            && node.prev_sibling().is_some_and(|n| n.kind() == "enum")
+            && node.next_sibling().is_some_and(|n| n.kind() == ":");
+        if unnamed_enum {
+            continue;
+        }
         if node.is_error() || node.is_missing() {
             let p = node.start_position();
             return Err(anyhow!("syntax error at {}:{} ({})", p.row + 1, p.column + 1, node.kind()));
@@ -946,11 +999,25 @@ pub(crate) fn validate_tree(tree: &tree_sitter::Tree) -> Result<()> {
     Ok(())
 }
 
+/// Lower one fully parsed function from an existing tree. The node must come
+/// from `src`; its ancestors retain class and namespace context. Errors in
+/// the function are rejected even if the rest of the tree uses unsupported
+/// grammar. This is useful for compiler-validated external corpora.
+pub fn lower_function<S: Spec>(spec: &S, src: std::sync::Arc<str>, node: Node) -> Result<Option<Cfg>> {
+    validate_node(node)?;
+    if !spec.is_function(node) {
+        return Err(anyhow!("expected a function node"));
+    }
+    let mut cfg = Engine::new(spec, src.as_bytes()).function(node);
+    if let Some(cfg) = &mut cfg {
+        cfg.source = src;
+    }
+    Ok(cfg)
+}
+
 /// Every import in the file, wherever it appears.
 pub fn parse_imports<S: Spec>(spec: &S, lang: tree_sitter::Language, src: &str) -> Result<Vec<Import>> {
-    let mut parser = Parser::new();
-    parser.set_language(&lang)?;
-    let tree = parser.parse(src, None).ok_or_else(|| anyhow!("parse failed"))?;
+    let tree = parse_tree(lang, src)?;
     validate_tree(&tree)?;
     let mut out = vec![];
     let mut stack = vec![tree.root_node()];
@@ -965,9 +1032,7 @@ pub fn parse_imports<S: Spec>(spec: &S, lang: tree_sitter::Language, src: &str) 
 
 /// Every struct / class definition and type alias in the file, wherever it appears.
 pub fn parse_declarations<S: Spec>(spec: &S, lang: tree_sitter::Language, src: &str) -> Result<Declarations> {
-    let mut parser = Parser::new();
-    parser.set_language(&lang)?;
-    let tree = parser.parse(src, None).ok_or_else(|| anyhow!("parse failed"))?;
+    let tree = parse_tree(lang, src)?;
     validate_tree(&tree)?;
     let mut out = Declarations::default();
     let mut stack = vec![tree.root_node()];
@@ -981,9 +1046,7 @@ pub fn parse_declarations<S: Spec>(spec: &S, lang: tree_sitter::Language, src: &
 }
 
 pub fn lower<S: Spec>(spec: &S, lang: tree_sitter::Language, src: &str) -> Result<Vec<Cfg>> {
-    let mut parser = Parser::new();
-    parser.set_language(&lang)?;
-    let tree = parser.parse(src, None).ok_or_else(|| anyhow!("parse failed"))?;
+    let tree = parse_tree(lang, src)?;
     validate_tree(&tree)?;
     let mut out = vec![];
     if spec.top_level()
