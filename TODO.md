@@ -21,6 +21,14 @@ Implemented: `taintless crypto` and the `crypto-*-from-input` rules (see the
 - [ ] Widen `tables.toml` as projects need it (Ruby, PHP and Swift have the
   basics).
 
+## C and C++ preprocessing
+
+Implemented: macro expansion and conditionals, with macros from project
+headers (see the [guide](docs/guide.md#c-and-c-macros)). Open:
+
+- [ ] Take `-D`/`-U`/`-I` from a compilation database or the configuration.
+- [ ] Read common system headers' macros (`NULL`, `EOF`, `S_IRUSR`, ...).
+
 ## Deliberate limits
 
 - JS/TS `await`/`yield` suspension, Rust drops and `?` through `Drop`, and C++

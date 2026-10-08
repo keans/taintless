@@ -317,6 +317,34 @@ Call patterns work as in the built-in tables: `eval` is exactly that name,
 that name. Java's `main(String[] args)` and C's `argv` are untrusted by
 default.
 
+### C and C++ macros
+
+C and C++ files are preprocessed before they are parsed, so a call hidden
+behind a macro is seen as the call it is:
+
+```c
+#define RUN(cmd) system(cmd)       /* RUN(argv[1]) is a system() call */
+#define SHELL system               /* SHELL(x) too */
+#define LAUNCH(a, b) a##b          /* LAUNCH(sys, tem)(x) as well */
+```
+
+- Object-like and function-like macros are expanded, with `#`, `##` and
+  `__VA_ARGS__`. Strings and comments are left alone, and a macro is not
+  expanded inside its own expansion.
+- `#if`, `#ifdef`, `#elif` and `#else` pick their branch when the condition
+  depends only on macros the code defines (`#if 0`, `#if MODE == 2`,
+  `#ifdef __cplusplus`). A condition on a macro nothing defines (`_WIN32`,
+  a build flag) keeps every branch, so all variants are analyzed.
+- Macros from a header count when the header is part of the scanned project
+  and the file includes it (`#include "config.h"`, or `<config.h>` when the
+  path matches a project file). Headers outside the project (system headers)
+  are not read.
+- Line numbers stay as written; columns after an expansion can shift. The
+  cache key of a file covers the headers it includes, so editing a header
+  analyzes its includers again.
+
+Macros passed on the compiler command line (`-DNAME=value`) are not known.
+
 ### File dependencies
 
 `deps` answers "which file depends on which". An edge `A -> B` means A imports

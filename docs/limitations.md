@@ -172,8 +172,11 @@ answers "may", so it errs on one side on purpose.
   right).**
   **Kind:** by design
 
-- **C/C++ preprocessing is not run: macros are not expanded, `#ifdef` branches
-  are not selected, so macro-hidden control flow and calls are invisible.**
+- **C/C++ preprocessing is partial: macros and conditions are resolved
+  from the project's own code only. Macros from system headers or
+  compiler flags (`-D`) are unknown, `#if` on such a macro keeps every
+  branch, and raw string literals or multi-line comments inside a macro
+  call can be mis-read.**
   **Kind:** by design
 
 - **Rust macros other than the modeled ones (`panic!`, `?`) are not expanded.**

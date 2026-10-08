@@ -460,12 +460,23 @@ fn load(path: &Path, cache: Option<&Path>, configs: Option<&[PathBuf]>) -> Resul
             None
         }
     });
+    // macros defined in one file and used in another: C / C++ sources are preprocessed with the
+    // headers of the project, before their key is computed (the key covers what they include)
+    let is_c = |f: &&Path| matches!(lang::Language::detect(f), Some(Language::C | Language::Cpp));
+    let c_files = lang::cpre::Project::new(files.iter().map(PathBuf::as_path).filter(is_c));
     // (path, language, key, source or read error)
     let prepared: Vec<_> = sources
         .into_par_iter()
         .map(|(p, src)| match src {
             Ok(s) => {
                 let lang = lang::Language::detect_with_source(&p, &s).expect("filtered by detect");
+                let s = match lang {
+                    Language::C | Language::Cpp => match c_files.preprocess(&p, lang.is_cpp(), &s) {
+                        std::borrow::Cow::Owned(processed) => processed,
+                        std::borrow::Cow::Borrowed(_) => s,
+                    },
+                    _ => s,
+                };
                 let key = store::facts_key(lang, &s);
                 (p, Ok((lang, key, s)))
             }

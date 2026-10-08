@@ -1,5 +1,6 @@
 pub mod c;
 pub mod common;
+pub mod cpre;
 pub mod csharp;
 pub mod go;
 pub mod java;
@@ -48,6 +49,11 @@ pub enum Language {
 }
 
 impl Language {
+    /// C++ rather than C (headers are sniffed by [`detect_with_source`](Self::detect_with_source)).
+    pub fn is_cpp(self) -> bool {
+        self == Self::Cpp
+    }
+
     /// Does a literal's key `name` read as `.name` (JS, TS, Go) rather than `['name']`?
     pub fn dot_keys(self) -> bool {
         matches!(self, Self::JavaScript | Self::TypeScript | Self::Tsx | Self::Go)
@@ -143,8 +149,18 @@ macro_rules! with_grammar {
     };
 }
 
+/// `src` with the macros of a C / C++ file resolved (see [`cpre`]); other languages are as written.
+/// Text that the project-aware pass of the scanner already processed passes through.
+fn resolved(lang: Language, src: &str) -> std::borrow::Cow<'_, str> {
+    match lang {
+        Language::C | Language::Cpp => cpre::preprocess_alone(lang.is_cpp(), src),
+        _ => src.into(),
+    }
+}
+
 /// Parse `src` and lower every function to a CFG.
 pub fn build_cfgs(lang: Language, src: &str) -> Result<Vec<Cfg>> {
+    let src = &*resolved(lang, src);
     let mut cfgs = with_grammar!(lang, |spec, g| common::lower(spec, g, src))?;
     let source: std::sync::Arc<str> = src.into();
     for cfg in &mut cfgs {
@@ -155,6 +171,7 @@ pub fn build_cfgs(lang: Language, src: &str) -> Result<Vec<Cfg>> {
 
 /// Parse `src` and build its language-neutral AST (`file` is the id its nodes carry).
 pub fn build_ast(lang: Language, file: u32, src: &str) -> Result<crate::cpg::ast::Ast> {
+    let src = &*resolved(lang, src);
     with_grammar!(lang, |spec, g| crate::cpg::ast::build(spec, g, file, src))
 }
 
@@ -168,10 +185,12 @@ fn looks_like_cpp(src: &str) -> bool {
 
 /// The struct / class definitions and type aliases of a file, as written in the source.
 pub fn declarations(lang: Language, src: &str) -> Result<common::Declarations> {
+    let src = &*resolved(lang, src);
     with_grammar!(lang, |spec, g| common::parse_declarations(spec, g, src))
 }
 
 /// The imports / includes / `use`s of a file, as written in the source.
 pub fn imports(lang: Language, src: &str) -> Result<Vec<common::Import>> {
+    let src = &*resolved(lang, src);
     with_grammar!(lang, |spec, g| common::parse_imports(spec, g, src))
 }
